@@ -1,0 +1,100 @@
+Of course! This is a substantial and challenging assignment that covers many core concepts of distributed systems. Breaking it down into a roadmap is the perfect way to approach it.
+
+Here is a step-by-step roadmap, starting from the fundamentals and moving to implementation.
+
+### Phase 1: Foundation & Concepts (Days 1-3)
+
+Before you write a single line of code, you must understand the concepts.
+
+**1. Understand the Problem Domain:**
+*   **Peer-to-Peer (P2P) File Sharing:** This is not a client-server model like HTTP. Each client (`peer`) is both a consumer and a provider of data. Read about how classic systems like BitTorrent or Napster work. Your assignment is a simplified version of this.
+*   **Role of the Tracker:** The tracker is the "phonebook" of the system. It doesn't store the files; it keeps metadata (which peer has which pieces of which file). Clients ask the tracker, "Who has pieces of file X?" and the tracker replies with a list of peers. The actual file transfer happens directly between clients.
+
+**2. Core Computer Science Concepts to Learn/Revise:**
+*   **Socket Programming (TCP):** This is the absolute bedrock. You must be comfortable creating TCP sockets, `bind()`, `listen()`, `accept()` (for servers), and `connect()` (for clients), and sending/receiving data over sockets.
+    *   *Keyword:* Beej's Guide to Network Programming. This is the bible for socket programming in C.
+*   **Concurrency:** Your server and client will be doing multiple things at once (e.g., listening for new connections while simultaneously handling downloads). You must use **threads** (`pthreads`).
+    *   Learn about thread creation, mutex locks (`pthread_mutex_t`), and condition variables to protect shared data structures (e.g., the list of online users on the tracker).
+*   **File I/O:** You need to read files in chunks (512KB pieces), calculate SHA1 hashes of these chunks, and write them back. Practice using `open`, `read`, `write`, `lseek`, and `close` system calls.
+
+**3. Specific Algorithmic Concepts:**
+*   **SHA1 Hashing:** Learn how to use the OpenSSL library's SHA1 functions. It's a standard library and should be allowed. You'll need this for file integrity.
+*   **Piece Selection Strategy:** Think about how a downloading client chooses which piece to request next. A simple but effective strategy is **"Rarest First"** – request the piece that is available on the fewest peers first. This helps distribute pieces across the network.
+
+### Phase 2: Design & Protocol (Days 4-7)
+
+**1. Define Your Network Protocol:**
+This is the most critical design step. You must define exactly how your tracker, client, and other tracker talk to each other. **Write this down first.**
+*   **Message Format:** How will you structure a message? A simple and effective format is:
+    `<Message_Length><Message_Type><Payload>`
+    *   `Message_Length`: 4-byte integer indicating the total size of the message (including itself).
+    *   `Message_Type`: 4-byte integer (e.g., 1 = LOGIN, 2 = CREATE_GROUP, 3 = FILE_LIST_REQUEST...). Define an enum for this.
+    *   `Payload`: The actual data (e.g., `user_id:password`, `group_id`, file metadata).
+*   **Design Every Interaction:**
+    *   What message does a client send to `login`? What does the tracker reply? (Success + session token? Or failure + error code?)
+    *   What message does a client send to `upload_file`? The payload must include the filename, filesize, SHA1 of the whole file, and a list of SHA1 hashes for each 512KB piece.
+    *   What message does a client send to `download_file`? The tracker's reply must be a list of peers (IP:Port) that have this file.
+    *   What message does a client send to another client to request a specific piece of a file? (e.g., "Send me piece #3 of file ABC.iso").
+    *   **Tracker-to-Tracker Sync Protocol:** This is crucial. How will they sync? A simple way is for Tracker A, upon receiving any state change (new user, new group), to immediately send a message to Tracker B with the update. If Tracker B is down, Tracker A must keep a log of unsent updates and replay them when Tracker B comes back online.
+
+**2. Design Your Data Structures:**
+Plan the core data structures you'll need. They must be thread-safe (protected by mutexes).
+*   **On the Tracker:**
+    *   `User`: `user_id`, `password` (store a hash, not plaintext!), `is_online`, `ip`, `port`.
+    *   `Group`: `group_id`, `owner_id`, `members[]`, `pending_requests[]`.
+    *   `File`: `filename`, `filesize`, `full_hash`, `group_id`, `user_id_who_shared`.
+    *   `FilePiece`: Maps a `file_id` to a list of peers who have that file.
+*   **On the Client:**
+    *   Data structure to track ongoing downloads: which pieces you have, which pieces you're downloading, which peers have what.
+
+### Phase 3: Implementation Roadmap (2.5 Weeks)
+
+Implement in this order. **Get a minimal version working at each step before moving on.**
+
+**Week 1: The Basic Tracker & Client (No File Transfer)**
+1.  **Skeleton Code:** Create the basic structure for `tracker` and `client` that can parse command line arguments.
+2.  **TCP Server (Tracker):** Make the tracker able to accept multiple client connections concurrently (using threads).
+3.  **Protocol Functions:** Write helper functions to `send_message(socket, type, payload)` and `receive_message(socket)` that handle the `<length><type><payload>` format. This is reusable for all components.
+4.  **User & Group Management:** Implement the core commands **without persistence**. Hardcode a tracker list. Just keep everything in memory.
+    *   `create_user`, `login`, `create_group`, `join_group`, `list_groups`.
+    *   Test this thoroughly with multiple clients.
+
+**Week 2: File Sharing & Downloading**
+1.  **File Metadata Handling (Upload):** Implement `upload_file`. The client should read the file, split it into pieces, calculate SHA1 hashes for the whole file and each piece, and send this metadata to the tracker.
+2.  **Peer Discovery (Download):** Implement `list_files` and the first part of `download_file`. When a client requests to download, the tracker should reply with the list of peers that have the file.
+3.  **P2P File Transfer Protocol:** This is the hardest part.
+    *   Implement the client-side server thread that listens for incoming piece requests from other peers.
+    *   Implement the client-side logic to connect to a peer and request a specific piece of a file (`"GET <filehash> <piece_index>"`).
+    *   Implement the logic to serve a piece when requested.
+    *   Start with downloading a file from a single peer. **Get this working first.**
+4.  **Multi-Peer Download & Piece Management:** Enhance the download logic to connect to multiple peers. Implement your piece selection algorithm (start with sequential or random). Write the downloaded pieces to a temporary file and verify their hash.
+
+**Week 3: Advanced Features & Polish**
+1.  **Tracker Synchronization:** Implement the tracker-to-tracker communication. When a tracker gets an update, it sends it to the other tracker. Handle the case where the other tracker is offline.
+2.  **Persistence:** Make the tracker save its state (users, groups, file metadata) to disk periodically or on shutdown and reload it on startup. Simple text files are fine.
+3.  **Show Downloads:** Implement the `show_downloads` command to show progress.
+4.  **Error Handling & Robustness:** Go through your code. Add error checking for *every* system call. Handle broken pipes (peers disconnecting). Add timeouts for network operations.
+5.  **Testing and Debugging:** Test with small files, then large files (>100MB). Test with two trackers. Test by killing a tracker during operation. Test by killing a peer during a download.
+
+### Tools & Resources
+
+*   **Language:** C++ (or C). C++ might be easier due to STL containers (`std::vector`, `std::map`).
+*   **Version Control:** Use **Git** from day one. Commit small, working units of code.
+*   **Debugging:** Use `gdb` for debugging crashes. Use `valgrind` to check for memory leaks. This is mandatory.
+*   **Networking Tools:** Use `netcat` (`nc`) or `telnet` to manually test your tracker's socket server initially.
+*   **References:**
+    *   **Beej's Guide to Network Programming:** Essential.
+    *   **OpenSSL SHA1 Man Page:** `man EVP_DigestInit` etc.
+    *   **Pthreads Tutorial:** E.g., https://computing.llnl.gov/tutorials/pthreads/
+
+### How to Start *Today*
+
+1.  **Set up your development environment.**
+2.  **Read Beej's Guide, sections 5 and 6** (get a basic TCP client/server example running).
+3.  **Create two programs:** `tracker.c` and `client.c`.
+4.  **Make the tracker** `bind()`, `listen()`, and `accept()` a connection.
+5.  **Make the client** `connect()` to the tracker.
+6.  **Make them exchange a simple "Hello" message.**
+7.  **Congratulations, you've started!** Now follow the roadmap.
+
+This assignment is a marathon, not a sprint. Consistent, planned progress is the key to success. Good luck!

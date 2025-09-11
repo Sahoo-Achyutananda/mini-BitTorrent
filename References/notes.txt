@@ -1,0 +1,20 @@
+structure of sockaddr_in : 
+
+struct sockaddr_in {
+    sa_family_t    sin_family;   // Address family (AF_INET)
+    in_port_t      sin_port;     // Port number (16-bit, network byte order)
+    struct in_addr sin_addr;     // IP address (32-bit, network byte order)
+    unsigned char  sin_zero[8];  // Padding (not used)
+};
+
+we use htons(portnumber) to convert from host byte order to network byteorder
+wht is host byte order and network byte order - 
+    byte order typically refers to endianness - 
+    host byte order : byte ordering used internally by machines - usually little endianness
+    network byte order : byte ordering used in protocols - usually big endianness
+
+    htons() - host to n/w short (16 bit)
+    ntohs() - n/w to host short (16 bit)
+    htonl() - host to n/w long (32 bit)
+    ntohl() - network to host long (32 bit)
+
