@@ -18,3 +18,6 @@ wht is host byte order and network byte order -
     htonl() - host to n/w long (32 bit)
     ntohl() - network to host long (32 bit)
 
+what is pthread_detach ?
+If you detach a thread using pthread_detach(tid) (or by setting attributes when creating), you’re telling the OS:
+“I don’t care about this thread’s result. Clean up its resources automatically when it finishes.”

@@ -1,2 +1,1 @@
-Phase 1 : 
-
+1. is there a need to store client session information ?? like a token or anything ?

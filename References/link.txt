@@ -1,4 +1,11 @@
+Shared by TAs -
 https://www.linuxhowtos.org/C_C++/socket.htm
-https://www.geeksforgeeks.org/c/thread-functions-in-c-c/
 
+
+Other Links -
+https://www.geeksforgeeks.org/c/thread-functions-in-c-c/
 https://man7.org/linux/man-pages/man3/pthread_mutex_lock.3p.html
+
+
+Youtube Videos - 
+https://www.youtube.com/watch?v=ldJ8WGZVXZk

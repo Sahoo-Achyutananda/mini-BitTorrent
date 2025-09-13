@@ -55,18 +55,18 @@ int main(int argc, char *argv[]){
         bzero(buffer, 255);
 
         // a small piece of code to read data from the server - 
-        // n = read(sockfd, buffer, 255);
-        // if(n < 0){
-        //     perror("read");
-        //     return 1;
-        // }
+        n = read(sockfd, buffer, 255);
+        if(n < 0){
+            perror("read");
+            return 1;
+        }
 
-        // printf("Server : %s", buffer);
+        printf("Server : %s", buffer);
 
-        // int l = strncmp("bye", buffer, 3);
-        // if(l == 0){
-        //     break;
-        // }
+        int l = strncmp("bye", buffer, 3);
+        if(l == 0){
+            break;
+        }
     }
 
     close(sockfd);
