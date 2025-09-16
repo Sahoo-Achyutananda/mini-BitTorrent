@@ -43,6 +43,7 @@ int main(int argc, char *argv[]){
         perror("connect");
         return 1;
     }
+    string userName;
 
     while(1){
         bzero(buffer, 255);
@@ -62,11 +63,7 @@ int main(int argc, char *argv[]){
         }
 
         printf("Server : %s", buffer);
-
-        int l = strncmp("bye", buffer, 3);
-        if(l == 0){
-            break;
-        }
+        
     }
 
     close(sockfd);

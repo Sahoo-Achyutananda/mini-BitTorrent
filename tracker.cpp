@@ -10,78 +10,14 @@
 #include <arpa/inet.h> // for inet_ntoa -> prints the ipv4 address of the client -> that's its use so far ! - 13sept
 #include <pthread.h>
 #include "colors.h"
-
-using namespace std;
+#include "constructs.h"
 
 // functions declarations -
 void * handleConnections(void *arg);
 void writeToClient(int sockfd, string msg);
+void* handleTrackerCommands(void* arg);
 // bool checkUserStatus(string uid);
 // bool checkUserLoginStatus(string uid);
-class User;
-extern unordered_map<string, User*> users;
-
- 
-class User{
-private : 
-    string userId;
-    string password;
-    bool isOwner;
-public:
-    User(string userId, string password){
-        this->userId = userId;
-        this->password = password;
-        this->isOwner = false;
-    }
-
-    string getPassword(){
-        return this->password;
-    }
-
-    string getUserId(){
-        return this->userId;
-    }
-
-    bool getIsOwner(){
-        return this->isOwner;
-    }
-
-    void makeOwner(string userId){
-        this->isOwner = true;
-    }
-};
-
-
-class Group{
-private:
-    string groupId;
-    string ownerId;
-    unordered_map<string, User*> groupUsers;
-
-public:
-    Group(string groupId){
-        this->groupId = groupId;
-    }
-
-    void addOwner(string ownerId){
-        this->ownerId = ownerId;
-        groupUsers[ownerId] = users[ownerId];
-    }
-};
-
-
-// maybe i'll use it - so i kept it !
-class System{
-public:
-     
-    
-};
-
-unordered_map<string, User*> users;
-unordered_map<string, Group*> groups;
-unordered_map<string, User*> loggedInUsers; 
-unordered_map<string, Group*> groupOwners; //  initially planned using <User, Group> -> found that it'll increase complexity -> needed to write some custom logic to handle USER as a key
-   
 
 vector<string> tokenizeString(string s){
     vector<string> result;
@@ -126,6 +62,9 @@ int main(int argc, char *argv[]){
     listen(sockfd, 5);
     cout << "Tracker Listening on Port No : " << portno << endl;
     
+    pthread_t trackerThread;
+    pthread_create(&trackerThread, NULL, handleTrackerCommands, NULL);
+    pthread_detach(trackerThread);
 
     while(1){
         socklen_t clilen;
@@ -170,6 +109,52 @@ void writeToClient(int sockfd, string msg){
 //     return false;
 // }
 
+
+void* handleTrackerCommands(void* arg) {
+    cout << "Tracker console started. Type 'help' for commands." << endl;
+    string current_user; // Console's own session
+    
+    while (true) {
+        string input;
+        cin >> input;
+        
+        if (input.empty()) continue;
+        
+        vector<string> tokens = tokenizeString(input);
+        
+        if(tokens[0] == "list_users"){
+            int n = users.size();
+            for(auto &[userId, User] : users){
+                cout << userId << endl;
+            }
+        }else if(tokens[0] == "user_count"){
+            int n = users.size();
+            cout << n << endl;
+        }else if(tokens[0] == "list_loggedin_users"){
+            int n = loggedInUsers.size();
+            for(auto &[userId, User] : loggedInUsers){
+                cout << userId << endl;
+            }
+        }else if(tokens[0] == "loggedin_user_count"){
+            int n = loggedInUsers.size();
+            cout << n << endl;
+        }else if(tokens[0] == "list_groups"){
+            int n = groups.size();
+            for(auto&[groupId, Group] : groups){
+                cout << groupId << endl;
+            }
+        }else if(tokens[0] == "list_group_details"){
+            int n = groups.size();
+            for(auto&[groupId, g] : groups){
+                cout << groupId << " " << g->getGroupUserCount() << endl;
+            }
+        }
+        else{
+            continue;
+        }   
+    }
+}
+
 void *handleConnections(void *arg){
     int newsockfd = *(int *)arg; // typecasting it as an integer pointer and then dereferencing it !
     delete (int*)arg;
@@ -206,7 +191,7 @@ void *handleConnections(void *arg){
                 if(users.find(tokens[1]) == users.end()){
                     User *u = new User(tokens[1], tokens[2]);
                     users[tokens[1]] = u;
-                    clientName = tokens[1];
+                    
                     cout << "user created" << endl;
                     writeToClient(newsockfd, "User created successfully");
                 }else{
@@ -230,30 +215,88 @@ void *handleConnections(void *arg){
                         writeToClient(newsockfd, "Password is incorrect");
                     }
                     loggedInUsers[tokens[1]] = u;
+                    clientName = tokens[1];
                     cout << fontBold << colorGreen << "Login successful !" << clientName << reset << endl;
-                    writeToClient(newsockfd, ("Login successful : %s",clientName));
+                    writeToClient(newsockfd, "Login successful");
                 }
             }
-        }else{
-            writeToClient(newsockfd, "Invalid Command ... \nValid Commands :\n1. create_user <userid> <password>\n2. login <userid> <password>");
+        }else if(tokens[0] == "create_group"){
+            if(tokens.size() != 2){
+                cerr << fontBold << colorRed << "Usage : create_group <group_id>" << reset << endl;
+            }else{
+                if(clientName == ""){
+                    // cerr << fontBold << colorRed << "No user is logged-in" << reset << endl;
+                    writeToClient(newsockfd, "No user is Logged In !");
+                }else{
+                    // fetch the logged in user data -
+                    User *u = users[clientName];
+                    // create a new group -
+                    Group *g = new Group(tokens[1]);
+                    // adding a logged in user as a owner
+                    g->addOwner(u->getUserId());
+                    writeToClient(newsockfd, "No user is Logged In !");
+                }
+            }
+        }else if(tokens[0] == "join_group"){
+            if(tokens.size() != 2){
+                cerr << fontBold << colorRed << "Usage : join_group <group_id>" << reset << endl;
+            }else{
+                if(clientName == ""){
+                    cerr << fontBold << colorRed << "No user is logged-in" << reset << endl;
+                }else{
+                    // fetch the logged in user data -
+                    User *u = users[clientName];
+                    // get group -
+                    Group *g = groups[tokens[1]];
+
+                    if(g->checkUserExistance(clientName)){
+                        cerr << fontBold << colorRed << "User already exists in the group !" << reset << endl;
+                        writeToClient(newsockfd, "User already exists in the group !");
+                    }else{
+                        // add the logged in user to the group
+                        g->addRequest(u->getUserId());
+                        cout << fontBold << colorGreen << clientName << " requested to join " << tokens[1] << reset << endl;
+                        writeToClient(newsockfd, "Successfully Added to Group !");
+                    }
+                }
+            }
+        }else if(tokens[0] == "leave_group"){
+            if(tokens.size() != 2){
+                cerr << fontBold << colorRed << "Usage : leave_group <group_id>" << reset << endl;
+            }else{
+                if(clientName == ""){
+                    cerr << fontBold << colorRed << "No user is logged-in" << reset << endl;
+                }else{
+                    // fetch the logged in user data -
+                    User *u = users[clientName];
+                    // get group -
+                    Group *g = groups[tokens[1]];
+
+                    g->removeUser(u->getUserId());
+                    cout << fontBold << colorGreen << clientName << "successfully Removed from group" << tokens[1] << reset << endl;
+                    writeToClient(newsockfd, "Successfully Removed from Group !");
+                }
+            }
+        }else if(tokens[0] == "list_groups"){
+            int n = groups.size();
+            if(n == 0){
+                writeToClient(newsockfd, "No Groups Exists !");
+            }else{
+                string t = "";
+                for(auto&[groupId, Group] : groups){
+                    t += groupId;
+                    t += '\n';
+                }
+                writeToClient(newsockfd, t);
+            }
         }
-        // else if(tokens[0] == "create_group"){
-        //     if(tokens.size() != 2){
-        //         cerr << fontBold << colorRed << "Usage : create_group <group_id>" << reset << endl;
-        //     }else{
-        //         if(checkUserLoginStatus){
-        //             cerr << fontBold << colorRed << "UserName doesnot exists" << reset << endl;
-        //         }else{
-        //             User *u = users[tokens[1]];
-        //             loggedInUsers[tokens[1]] = u;
-        //         }
-        //     }
-        // }        
-        
+        else{
+            writeToClient(newsockfd, "Invalid Command ... \nValid Commands :\n1. create_user <userid> <password>\n2. login <userid> <password>");
+        }  
 
         // -----------------------------------------
         
-        // a small piece of code to write to the client - currently not using it
+        // a small piece of code to write to the client - currently not using it -infact i built a new function
         // fgets(buffer, 255, stdin);
 
         // n = write(newsockfd, buffer, strlen(buffer));
