@@ -1,1 +1,7 @@
+<A lot of debugging was done too ... >
 1. is there a need to store client session information ?? like a token or anything ?
+2. what problems could i face if i pass acknowledgment messages everytime an action is performed ?
+3. how can i manage leave_group ?? suppose the main owner left the group -> what is to be done ?
+4. give me some ideas to implement tracker sunchronizasstion
+5. what is pub-sub architecture ??
+6. 

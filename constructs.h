@@ -4,6 +4,14 @@
 #include <bits/stdc++.h>
 using namespace std;
 
+class User;
+class Group;
+
+unordered_map<string, User*> users;
+unordered_map<string, Group*> groups;
+unordered_map<string, User*> loggedInUsers; 
+unordered_map<string, Group*> groupOwners; //  initially planned using <User, Group> -> found that it'll increase complexity -> needed to write some custom logic to handle USER as a key
+   
 class User{
 private : 
     string userId;
@@ -72,6 +80,7 @@ public:
     void addOwner(string ownerId){
         this->ownerId = ownerId;
         groupUsers[ownerId] = users[ownerId];
+        groupOwners[ownerId] = this;
     }
     
     void addRequest(string userId){
@@ -86,24 +95,37 @@ public:
         }
         return false;
     }
+
+    vector<string> getRequests(){
+        string temp = "";
+        vector<string> result;
+        for(auto &[userId, u] : requests){
+            temp+=userId;
+            temp+=" ";
+            temp+=(u->getUserId());
+
+            result.push_back(temp);
+        }
+        return result;
+    }
 };
 
 
-class Request{
 
-};
+bool isGroupOwner(string userId){
+    return groupOwners.find(userId) != groupOwners.end();
+}
 
-// maybe i'll use it - so i kept it !
-class System{
-public:
-     
-    
-};
+bool isGroup(string groupId){
+    return groups.find(groupId) != groups.end();
+}
 
-unordered_map<string, User*> users;
-unordered_map<string, Group*> groups;
-unordered_map<string, User*> loggedInUsers; 
-unordered_map<string, Group*> groupOwners; //  initially planned using <User, Group> -> found that it'll increase complexity -> needed to write some custom logic to handle USER as a key
-   
+bool isUser(string userId){
+    return users.find(userId) != users.end();
+}
+
+bool isLoggedIn(string userId){
+    return loggedInUsers.find(userId) != loggedInUsers.end();
+}
 
 #endif // CONSTRUCTS_H

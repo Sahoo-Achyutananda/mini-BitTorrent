@@ -16,8 +16,13 @@
 void * handleConnections(void *arg);
 void writeToClient(int sockfd, string msg);
 void* handleTrackerCommands(void* arg);
-// bool checkUserStatus(string uid);
-// bool checkUserLoginStatus(string uid);
+
+// to trim extra spaces/tabs and stuff -
+string trim(string s) {
+    int start = s.find_first_not_of(" \n\r\t"); // find a valid start index
+    int end = s.find_last_not_of(" \n\r\t"); // find the vlid end index
+    return (start == string::npos) ? "" : s.substr(start, end - start + 1);
+}
 
 vector<string> tokenizeString(string s){
     vector<string> result;
@@ -25,10 +30,11 @@ vector<string> tokenizeString(string s){
 
     string temp;
     while(getline(stream, temp, ' ')){
-        result.push_back(temp);
+        result.push_back(trim(temp));
     }
     return result;
 }
+
 
 int main(int argc, char *argv[]){
     // set<User> users;
@@ -98,17 +104,6 @@ void writeToClient(int sockfd, string msg){
     msg+='\n';
     write(sockfd, msg.c_str(), msg.size());
 }
-
-// bool checkUserStatus(string uid){
-//     if(users[uid] != users.end()) return true;
-//     return false;
-// }
-
-// bool checkUserLoginStatus(string uid){
-//     if(loggedInUsers[uid] != loggedInUsers.end()) return true;
-//     return false;
-// }
-
 
 void* handleTrackerCommands(void* arg) {
     cout << "Tracker console started. Type 'help' for commands." << endl;
@@ -224,7 +219,8 @@ void *handleConnections(void *arg){
             if(tokens.size() != 2){
                 cerr << fontBold << colorRed << "Usage : create_group <group_id>" << reset << endl;
             }else{
-                if(clientName == ""){
+                if(clientName.empty()){
+                    // cout << clientName << endl; // debug
                     // cerr << fontBold << colorRed << "No user is logged-in" << reset << endl;
                     writeToClient(newsockfd, "No user is Logged In !");
                 }else{
@@ -234,7 +230,9 @@ void *handleConnections(void *arg){
                     Group *g = new Group(tokens[1]);
                     // adding a logged in user as a owner
                     g->addOwner(u->getUserId());
-                    writeToClient(newsockfd, "No user is Logged In !");
+                    groups[tokens[1]] = g;
+                    cout << fontBold << colorGreen << "Group Created successfully with - groupId " << tokens[1] << reset << endl;
+                    writeToClient(newsockfd, "Group Created Successfully !");
                 }
             }
         }else if(tokens[0] == "join_group"){
@@ -250,22 +248,24 @@ void *handleConnections(void *arg){
                     Group *g = groups[tokens[1]];
 
                     if(g->checkUserExistance(clientName)){
-                        cerr << fontBold << colorRed << "User already exists in the group !" << reset << endl;
+                        // cerr << fontBold << colorRed << "User already exists in the group !" << reset << endl;
                         writeToClient(newsockfd, "User already exists in the group !");
                     }else{
                         // add the logged in user to the group
                         g->addRequest(u->getUserId());
                         cout << fontBold << colorGreen << clientName << " requested to join " << tokens[1] << reset << endl;
-                        writeToClient(newsockfd, "Successfully Added to Group !");
+                        writeToClient(newsockfd, "Successfully Requested ! ");
                     }
                 }
             }
         }else if(tokens[0] == "leave_group"){
             if(tokens.size() != 2){
-                cerr << fontBold << colorRed << "Usage : leave_group <group_id>" << reset << endl;
+                // cerr << fontBold << colorRed << "Usage : leave_group <group_id>" << reset << endl;
+                writeToClient( newsockfd,"Usage : leave_group <group_id>");
             }else{
                 if(clientName == ""){
-                    cerr << fontBold << colorRed << "No user is logged-in" << reset << endl;
+                    // cerr << fontBold << colorRed << "No user is logged-in" << reset << endl;
+                    writeToClient( newsockfd, "No user is logged in !");
                 }else{
                     // fetch the logged in user data -
                     User *u = users[clientName];
@@ -289,6 +289,51 @@ void *handleConnections(void *arg){
                 }
                 writeToClient(newsockfd, t);
             }
+        }else if(tokens[0] == "list_requests"){
+            // yeh sirf group ka owner execute kar sakta hai ! so i check if the client ie userId is a groupOwner or not !
+            if(groupOwners.find(clientName) == groupOwners.end()){
+                writeToClient(newsockfd, "This is a priviledged command & You are not a Group Owner");
+            }
+            else{
+                if(tokens.size() != 2){
+                    // cerr << fontBold << colorRed << "Usage : list_requests <group_id>" << reset << endl;
+                    writeToClient(newsockfd, "Usage : list_requests <group_id>");
+                }else{
+                    if(groups.find(tokens[1]) == groups.end()){
+                        writeToClient(newsockfd, "Group doesnt exist");
+                    }else{
+                        Group *g = groups[tokens[1]];
+                        vector<string> res = g->getRequests();
+                        for(auto str : res){
+                            writeToClient(newsockfd, str);
+                        }
+                    }
+                }
+            }
+        }else if(tokens[0] == "accept_request"){
+            // accept_request <groupid> <userid>
+            cout << "debug : " << tokens[0] << " " << tokens[1] << " " << tokens[2] << endl;
+            if(tokens.size() != 3){
+                writeToClient(newsockfd, "Usage : accept_request <groupid> <userid>");
+            }else{
+                if(isGroup(tokens[1]) == false){
+                    writeToClient(newsockfd, "Group Id doesnt exist !");
+                }else if(isUser(tokens[2]) == false){
+                    writeToClient(newsockfd, "User does not exist");
+                }else{
+                    if(isGroupOwner(clientName)){
+                        Group *g = groups[tokens[1]];
+                        g->acceptRequest(tokens[2]);
+                        writeToClient(newsockfd, "Request Accepted");
+                    }else{
+                        writeToClient(newsockfd, "This is a priviledged instruction - You are not an owner.");
+                    }
+                }
+            }
+        }else if(tokens[0] == "whoami"){
+            // for debug purpose only
+            if(clientName.empty()) writeToClient(newsockfd, "LOGIN NAME NOT REGISTERED !");
+            writeToClient(newsockfd, clientName);
         }
         else{
             writeToClient(newsockfd, "Invalid Command ... \nValid Commands :\n1. create_user <userid> <password>\n2. login <userid> <password>");
