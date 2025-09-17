@@ -4,4 +4,7 @@
 3. how can i manage leave_group ?? suppose the main owner left the group -> what is to be done ?
 4. give me some ideas to implement tracker sunchronizasstion
 5. what is pub-sub architecture ??
-6. 
+6. do i neeed to run the syncHandling part in a different port ?
+7. what is setsocketopt() ??
+8. setsocketopt is cool ... what can be done with it ?
+9. should the health checker run on a different port ?

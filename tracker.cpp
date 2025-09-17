@@ -11,40 +11,37 @@
 #include <pthread.h>
 #include "colors.h"
 #include "constructs.h"
+#include "synchronize.h"
 
 // functions declarations -
 void * handleConnections(void *arg);
 void writeToClient(int sockfd, string msg);
 void* handleTrackerCommands(void* arg);
 
-// to trim extra spaces/tabs and stuff -
-string trim(string s) {
-    int start = s.find_first_not_of(" \n\r\t"); // find a valid start index
-    int end = s.find_last_not_of(" \n\r\t"); // find the vlid end index
-    return (start == string::npos) ? "" : s.substr(start, end - start + 1);
-}
-
-vector<string> tokenizeString(string s){
-    vector<string> result;
-    stringstream stream(s);
-
-    string temp;
-    while(getline(stream, temp, ' ')){
-        result.push_back(trim(temp));
-    }
-    return result;
-}
 
 
 int main(int argc, char *argv[]){
     // set<User> users;
     // set<Group> groups;
-    
+    if (argc < 3) {
+        cerr << fontBold << colorRed << "Usage: " << argv[0] << " <port> <tracker_info_file> <tracker_id>" << reset << endl;
+        return 1;
+    }
+
+    string trackerFileInfo = argv[1];
+    currentTrackerNo = atoi(argv[2]);
+    parseTrackerInfoFile(trackerFileInfo);
+
+    pthread_t sync_thread, health_thread;
+    pthread_create(&sync_thread, NULL, syncHandler, NULL);
+    pthread_create(&health_thread, NULL, healthChecker, NULL);
+    pthread_detach(sync_thread);
+    pthread_detach(health_thread);
 
     int sockfd, newsockfd, portno, n;
     
 
-    sockaddr_in serv_addr ;
+    sockaddr_in servAddr ;
     
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -53,14 +50,14 @@ int main(int argc, char *argv[]){
         return 1;
     }
 
-    bzero((char *)&serv_addr, sizeof(serv_addr));
-    portno = atoi(argv[1]);
+    bzero((char *)&servAddr, sizeof(servAddr));
+    portno = currentTracker.second;
 
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr = INADDR_ANY;
-    serv_addr.sin_port = htons(portno);
+    servAddr.sin_family = AF_INET;
+    servAddr.sin_addr.s_addr = INADDR_ANY;
+    servAddr.sin_port = htons(portno);
 
-    if(bind(sockfd, (sockaddr *)&serv_addr, sizeof(serv_addr))< 0){
+    if(bind(sockfd, (sockaddr *)&servAddr, sizeof(servAddr))< 0){
         perror("bind");
         return 1;
     }
@@ -74,17 +71,17 @@ int main(int argc, char *argv[]){
 
     while(1){
         socklen_t clilen;
-        sockaddr_in cli_addr;
+        sockaddr_in cliAddr;
 
         cout << "Tracker is running, waiting for requests ... " << endl;
-        clilen = sizeof(cli_addr);
-        newsockfd = accept(sockfd, (sockaddr *)&cli_addr, &clilen);
+        clilen = sizeof(cliAddr);
+        newsockfd = accept(sockfd, (sockaddr *)&cliAddr, &clilen);
 
         if(newsockfd < 0){
             perror("accept");
             return 1;
         }
-        cout << "Accepted Client with IP : " << inet_ntoa(cli_addr.sin_addr) << endl;
+        cout << "Accepted Client with IP : " << inet_ntoa(cliAddr.sin_addr) << endl;
         
         pthread_t thread;
         int * newSock = new int(newsockfd);
@@ -186,7 +183,7 @@ void *handleConnections(void *arg){
                 if(users.find(tokens[1]) == users.end()){
                     User *u = new User(tokens[1], tokens[2]);
                     users[tokens[1]] = u;
-                    
+                    syncMessageHelper("CREATE_USER", tokens[1] + " " + tokens[2]);
                     cout << "user created" << endl;
                     writeToClient(newsockfd, "User created successfully");
                 }else{
@@ -211,6 +208,7 @@ void *handleConnections(void *arg){
                     }
                     loggedInUsers[tokens[1]] = u;
                     clientName = tokens[1];
+                    syncMessageHelper("LOGIN", tokens[1] + " " + tokens[2]);
                     cout << fontBold << colorGreen << "Login successful !" << clientName << reset << endl;
                     writeToClient(newsockfd, "Login successful");
                 }
@@ -231,6 +229,7 @@ void *handleConnections(void *arg){
                     // adding a logged in user as a owner
                     g->addOwner(u->getUserId());
                     groups[tokens[1]] = g;
+                    syncMessageHelper("CREATE_GROUP", tokens[1] + " " + clientName);
                     cout << fontBold << colorGreen << "Group Created successfully with - groupId " << tokens[1] << reset << endl;
                     writeToClient(newsockfd, "Group Created Successfully !");
                 }
@@ -253,6 +252,7 @@ void *handleConnections(void *arg){
                     }else{
                         // add the logged in user to the group
                         g->addRequest(u->getUserId());
+                        syncMessageHelper("JOIN_GROUP", tokens[1] + " " + clientName);
                         cout << fontBold << colorGreen << clientName << " requested to join " << tokens[1] << reset << endl;
                         writeToClient(newsockfd, "Successfully Requested ! ");
                     }
@@ -273,6 +273,7 @@ void *handleConnections(void *arg){
                     Group *g = groups[tokens[1]];
 
                     g->removeUser(u->getUserId());
+                    syncMessageHelper("LEAVE_GROUP", tokens[1] + " " + clientName);
                     cout << fontBold << colorGreen << clientName << "successfully Removed from group" << tokens[1] << reset << endl;
                     writeToClient(newsockfd, "Successfully Removed from Group !");
                 }
@@ -312,7 +313,7 @@ void *handleConnections(void *arg){
             }
         }else if(tokens[0] == "accept_request"){
             // accept_request <groupid> <userid>
-            cout << "debug : " << tokens[0] << " " << tokens[1] << " " << tokens[2] << endl;
+            // cout << "debug : " << tokens[0] << " " << tokens[1] << " " << tokens[2] << endl;
             if(tokens.size() != 3){
                 writeToClient(newsockfd, "Usage : accept_request <groupid> <userid>");
             }else{
@@ -324,6 +325,7 @@ void *handleConnections(void *arg){
                     if(isGroupOwner(clientName)){
                         Group *g = groups[tokens[1]];
                         g->acceptRequest(tokens[2]);
+                        syncMessageHelper("ACCEPT_REQUEST", tokens[1] + " " + tokens[2]);
                         writeToClient(newsockfd, "Request Accepted");
                     }else{
                         writeToClient(newsockfd, "This is a priviledged instruction - You are not an owner.");

@@ -128,4 +128,23 @@ bool isLoggedIn(string userId){
     return loggedInUsers.find(userId) != loggedInUsers.end();
 }
 
+// to trim extra spaces/tabs and stuff -
+string trim(string s) {
+    int start = s.find_first_not_of(" \n\r\t"); // find a valid start index
+    int end = s.find_last_not_of(" \n\r\t"); // find the vlid end index
+    return (start == string::npos) ? "" : s.substr(start, end - start + 1);
+}
+
+vector<string> tokenizeString(string s){
+    vector<string> result;
+    stringstream stream(s);
+
+    string temp;
+    while(getline(stream, temp, ' ')){
+        result.push_back(trim(temp));
+    }
+    return result;
+}
+
+
 #endif // CONSTRUCTS_H
