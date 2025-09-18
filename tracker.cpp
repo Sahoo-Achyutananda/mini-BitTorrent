@@ -9,6 +9,7 @@
 #include <netdb.h>
 #include <arpa/inet.h> // for inet_ntoa -> prints the ipv4 address of the client -> that's its use so far ! - 13sept
 #include <pthread.h>
+
 #include "colors.h"
 #include "constructs.h"
 #include "synchronize.h"
@@ -23,7 +24,7 @@ void* handleTrackerCommands(void* arg);
 int main(int argc, char *argv[]){
     // set<User> users;
     // set<Group> groups;
-    if (argc < 3) {
+    if (argc != 3) {
         cerr << fontBold << colorRed << "Usage: " << argv[0] << " <port> <tracker_info_file> <tracker_id>" << reset << endl;
         return 1;
     }
@@ -32,6 +33,10 @@ int main(int argc, char *argv[]){
     currentTrackerNo = atoi(argv[2]);
     parseTrackerInfoFile(trackerFileInfo);
 
+    isPrimary = (currentTrackerNo == 0);
+
+    currentTracker = trackers[currentTrackerNo];
+
     pthread_t sync_thread, health_thread;
     pthread_create(&sync_thread, NULL, syncHandler, NULL);
     pthread_create(&health_thread, NULL, healthChecker, NULL);
@@ -39,7 +44,6 @@ int main(int argc, char *argv[]){
     pthread_detach(health_thread);
 
     int sockfd, newsockfd, portno, n;
-    
 
     sockaddr_in servAddr ;
     
@@ -88,7 +92,6 @@ int main(int argc, char *argv[]){
         // pthread_create(&thread, NULL, handleConnections, NULL); this is confusing
         pthread_create(&thread, NULL, handleConnections, (void *)newSock);
         pthread_detach(thread);
-        
     }
 
     close(newsockfd);
@@ -183,9 +186,9 @@ void *handleConnections(void *arg){
                 if(users.find(tokens[1]) == users.end()){
                     User *u = new User(tokens[1], tokens[2]);
                     users[tokens[1]] = u;
-                    syncMessageHelper("CREATE_USER", tokens[1] + " " + tokens[2]);
                     cout << "user created" << endl;
                     writeToClient(newsockfd, "User created successfully");
+                    syncMessageHelper("CREATE_USER", tokens[1] + " " + tokens[2]);
                 }else{
                     // cerr << fontBold << colorRed << "UserID already exists" << reset << endl;
                     writeToClient(newsockfd, "UserID already exists");
