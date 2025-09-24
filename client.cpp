@@ -10,36 +10,33 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <fstream>
+#include <pthread.h>
 
 #include "colors.h"
 
 using namespace std;
 
-// remember the process -
-/*
-1. client ko bind karne ki zaroorat nahi hai -> it has to directly connect !
-2. 
-*/
-
 vector<pair<string,int>> trackers;
+int trackerIndex = 0;
+int sockfd = -1;
+bool trackerAlive = false;
+pthread_mutex_t tracker_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+// Parse tracker info file
 void parseTrackerInfoFile(string fileName){
     ifstream file(fileName);
     string l;
-
     while(getline(file,l)){
         int pos = l.find(':');
         if(pos != string::npos){
             string ip = l.substr(0,pos);
             int port = stoi(l.substr(pos+1));
-
             trackers.push_back({ip,port});
         }
     }    
     file.close();
 }
 
-// just the same as before lol
 pair<string,int> parseIpPort(string s) {
     int pos = s.find(':');
     if (pos == string::npos) {
@@ -51,6 +48,42 @@ pair<string,int> parseIpPort(string s) {
     return {ip, port};
 }
 
+// Heartbeat thread: checks tracker health via tracker_port + 1000
+void* heartbeat(void* arg){
+    while(true){
+        sleep(1);
+        pthread_mutex_lock(&tracker_mutex);
+        if(trackerAlive && sockfd != -1){
+            string ip = trackers[trackerIndex].first;
+            int port = trackers[trackerIndex].second + 1000; // health port
+
+            int healthSock = socket(AF_INET, SOCK_STREAM, 0);
+            if(healthSock < 0){
+                perror("Health socket");
+                trackerAlive = false;
+                close(sockfd);
+                pthread_mutex_unlock(&tracker_mutex);
+                continue;
+            }
+
+            sockaddr_in healthAddr{};
+            healthAddr.sin_family = AF_INET;
+            healthAddr.sin_port = htons(port);
+            inet_pton(AF_INET, ip.c_str(), &healthAddr.sin_addr);
+
+            if(connect(healthSock, (struct sockaddr*)&healthAddr, sizeof(healthAddr)) < 0){
+                cout << fontBold << colorRed << "Tracker " << ip << ":" << port-1000 
+                     << " down! Switching..." << reset << endl;
+                trackerAlive = false;
+                close(sockfd);
+            }
+
+            close(healthSock);
+        }
+        pthread_mutex_unlock(&tracker_mutex);
+    }
+    return nullptr;
+}
 
 int main(int argc, char *argv[]){
 
@@ -60,24 +93,15 @@ int main(int argc, char *argv[]){
     }
 
     pair<string,int> clientInfo = parseIpPort(argv[1]);
-    string clientIp = clientInfo.first;
-    int clientPort = clientInfo.second;
-
-    cout << fontBold << colorGreen  << "Client running with IP " << clientIp << " and port " << clientPort << reset << endl;
-
-    int sockfd, n;
-    sockaddr_in serv_addr;
-    hostent *server;
-
-    char buffer[256];
+    cout << fontBold << colorGreen  << "Client running with IP " << clientInfo.first 
+         << " and port " << clientInfo.second << reset << endl;
 
     parseTrackerInfoFile(string(argv[2]));
-    int trackerIndex = 0;
 
-    //debug - 
-    for(auto t : trackers){
-        cout << t.first << " " << t.second << endl;
-    }
+    // Start heartbeat thread
+    pthread_t hbThread;
+    pthread_create(&hbThread, nullptr, heartbeat, nullptr);
+    pthread_detach(hbThread);
 
     while(trackerIndex < trackers.size()){
         string ipadr = trackers[trackerIndex].first;
@@ -85,70 +109,71 @@ int main(int argc, char *argv[]){
 
         cout << fontBold << colorGreen << "Trying tracker " << ipadr << ":" << portno << reset << endl;
 
+        pthread_mutex_lock(&tracker_mutex);
         sockfd = socket(AF_INET, SOCK_STREAM, 0);
         if(sockfd < 0){
             perror("socket");
-            return 1;
+            pthread_mutex_unlock(&tracker_mutex);
+            trackerIndex++;
+            continue;
         }
 
-        // server = gethostbyname(argv[1]); // old code
-        // if(server == NULL){
-        //     perror("gethostbyname");
-        //     return 1;
-        // }
-
-        bzero((char *)&serv_addr, sizeof(serv_addr));
+        sockaddr_in serv_addr{};
         serv_addr.sin_family = AF_INET;
-        serv_addr.sin_port   = htons(portno);
-
-        if (inet_pton(AF_INET, ipadr.c_str(), &serv_addr.sin_addr) <= 0) {
-            perror("Invalid address/ Address not supported");
+        serv_addr.sin_port = htons(portno);
+        if(inet_pton(AF_INET, ipadr.c_str(), &serv_addr.sin_addr) <= 0){
+            perror("Invalid address / not supported");
             close(sockfd);
+            pthread_mutex_unlock(&tracker_mutex);
             trackerIndex++;
             continue;
         }
 
         if(connect(sockfd, (sockaddr*)&serv_addr, sizeof(serv_addr)) < 0){
-            perror("connect");
+            perror("connect failed");
             close(sockfd);
+            pthread_mutex_unlock(&tracker_mutex);
             trackerIndex++;
             continue;
         }
 
-        cout << fontBold << colorGreen << "Connected to tracker " << ipadr << ":" << portno << endl;
-        
-        while(1){
-            bzero(buffer, 255);
-            fgets(buffer, 255, stdin);
-            n = write(sockfd, buffer, strlen(buffer));
-            if(n < 0){
-                perror("write");
-                close(sockfd);
-                // trackerIndex++;
+        cout << fontBold << colorGreen << "Connected to tracker " << ipadr << ":" << portno << reset << endl;
+        trackerAlive = true;
+        pthread_mutex_unlock(&tracker_mutex);
+
+        // Main input loop
+        char buffer[256];
+        while(trackerAlive){
+            if(!fgets(buffer, 256, stdin)){
+                cout << "stdin error\n";
                 break;
             }
-            bzero(buffer, 255);
 
-            // a small piece of code to read data from the server - 
+            pthread_mutex_lock(&tracker_mutex);
+            int n = write(sockfd, buffer, strlen(buffer));
+            if(n <= 0){
+                cout << "Write failed, switching tracker...\n";
+                trackerAlive = false;
+                close(sockfd);
+            }
+            pthread_mutex_unlock(&tracker_mutex);
+
+            pthread_mutex_lock(&tracker_mutex);
             n = read(sockfd, buffer, 255);
-            if(n < 0){
-                perror("read");
+            if(n <= 0){
+                cout << "Tracker disconnected!\n";
+                trackerAlive = false;
                 close(sockfd);
-                // trackerIndex++;
-                break;
+            } else {
+                buffer[n] = '\0';
+                cout << fontBold << colorBlue << buffer << reset << endl;
             }
-
-            // printf("Server : %s", buffer);
-            cout << fontBold << colorBlue << buffer << reset << endl;
-
-            int l = strncmp("Goodbye", buffer, 7);
-            if(l == 0){
-                break;
-            }
+            pthread_mutex_unlock(&tracker_mutex);
         }
-        trackerIndex++;
+
+        trackerIndex++; // move to next tracker
     }
 
-    close(sockfd);
+    cout << fontBold << colorRed << "No more trackers available. Exiting..." << reset << endl;
     return 0;
 }

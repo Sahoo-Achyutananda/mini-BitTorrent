@@ -19,7 +19,7 @@ void * handleConnections(void *arg);
 void writeToClient(int sockfd, string msg);
 void* handleTrackerCommands(void* arg);
 
-
+bool shutdownServer = false;
 
 int main(int argc, char *argv[]){
     // set<User> users;
@@ -96,8 +96,6 @@ int main(int argc, char *argv[]){
         // pthread_create(&thread, NULL, handleConnections, NULL); this is confusing
         pthread_create(&thread, NULL, handleConnections, (void *)newSock);
         pthread_detach(thread);
-
-        
     }
 
     close(newsockfd);
@@ -150,13 +148,18 @@ void* handleTrackerCommands(void* arg) {
                 cout << groupId << " " << g->getGroupUserCount() << endl;
             }
         }
-        // else if(tokens[0] == "quit"){ // there is a problem here
-        //     break;
-        // }
+        else if(input == "quit"){ // there is a problem here
+            // shutdownServer = true;
+            cout << "Shutting Down" << endl;
+            exit(0);
+            // break;
+        }
         else{
             continue;
         }   
     }
+
+    return nullptr;
 }
 
 void *handleConnections(void *arg){
