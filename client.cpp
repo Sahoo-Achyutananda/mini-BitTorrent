@@ -11,6 +11,7 @@
 #include <netdb.h>
 #include <fstream>
 #include <pthread.h>
+#include <fcntl.h>
 
 #include "colors.h"
 
@@ -72,8 +73,8 @@ void* heartbeat(void* arg){
             inet_pton(AF_INET, ip.c_str(), &healthAddr.sin_addr);
 
             if(connect(healthSock, (struct sockaddr*)&healthAddr, sizeof(healthAddr)) < 0){
-                cout << fontBold << colorRed << "Tracker " << ip << ":" << port-1000 
-                     << " down! Switching..." << reset << endl;
+                cout << fontBold << colorRed << "Tracker " << ip << ":" 
+                     << port-1000 << " down! Switching..." << reset << endl;
                 trackerAlive = false;
                 close(sockfd);
             }
@@ -141,32 +142,62 @@ int main(int argc, char *argv[]){
         trackerAlive = true;
         pthread_mutex_unlock(&tracker_mutex);
 
-        // Main input loop
+        // Set stdin to non-blocking
+        int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+        fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+
+        // Main input loop using select
         char buffer[256];
         while(trackerAlive){
-            if(!fgets(buffer, 256, stdin)){
-                cout << "stdin error\n";
+            ///////////////////////////////////////////////////////////
+            fd_set readfds;
+            FD_ZERO(&readfds);
+            FD_SET(sockfd, &readfds); // tracker socket
+            FD_SET(STDIN_FILENO, &readfds); // console input
+
+            int maxfd = max(sockfd, STDIN_FILENO);
+
+            int activity = select(maxfd + 1, &readfds, nullptr, nullptr, nullptr);
+
+            if(activity < 0){
+                perror("select");
+                continue;
+            }
+
+            // Tracker sent something
+            if(FD_ISSET(sockfd, &readfds)){
+                char buffer[256];
+                int n = read(sockfd, buffer, sizeof(buffer)-1);
+                if(n <= 0){
+                    cout << "Tracker disconnected!" << endl;
+                    trackerAlive = false;
+                    close(sockfd);
+                } else {
+                    buffer[n] = '\0';
+                    cout << buffer << endl;
+                }
+            }
+
+            // User typed something
+            if(FD_ISSET(STDIN_FILENO, &readfds)){
+                char buffer[256];
+                if(fgets(buffer, sizeof(buffer), stdin)){
+                    int n = write(sockfd, buffer, strlen(buffer));
+                    if(n <= 0){
+                        cout << "Write failed, switching tracker...\n";
+                        trackerAlive = false;
+                        close(sockfd);
+                    }
+                }
+            }
+
+            ///////////////////////////////////////////////////////////////////////
+
+            // Check if tracker failed in heartbeat
+            pthread_mutex_lock(&tracker_mutex);
+            if(!trackerAlive){
+                pthread_mutex_unlock(&tracker_mutex);
                 break;
-            }
-
-            pthread_mutex_lock(&tracker_mutex);
-            int n = write(sockfd, buffer, strlen(buffer));
-            if(n <= 0){
-                cout << "Write failed, switching tracker...\n";
-                trackerAlive = false;
-                close(sockfd);
-            }
-            pthread_mutex_unlock(&tracker_mutex);
-
-            pthread_mutex_lock(&tracker_mutex);
-            n = read(sockfd, buffer, 255);
-            if(n <= 0){
-                cout << "Tracker disconnected!\n";
-                trackerAlive = false;
-                close(sockfd);
-            } else {
-                buffer[n] = '\0';
-                cout << fontBold << colorBlue << buffer << reset << endl;
             }
             pthread_mutex_unlock(&tracker_mutex);
         }

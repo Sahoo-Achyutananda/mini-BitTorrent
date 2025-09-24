@@ -139,6 +139,46 @@ void processSyncMessage(string operation, string data){
             Group *g = groups[tokens[0]];
             g->acceptRequest(tokens[1]);
         }
+    }else if(operation == "UPLOAD_FILE") {
+
+        if(tokens.size() >= 6) {
+            string groupId = tokens[0];
+            string fileName = tokens[1];
+            string filePath = tokens[2];
+            long long fileSize = stoll(tokens[3]);
+            string uploaderId = tokens[4];
+            string fullFileSHA1 = tokens[5];
+            
+            if(groups.find(groupId) != groups.end()) {
+                Group* g = groups[groupId];
+                
+                // Create file info (without calculating pieces since we don't have the actual file)
+                FileInfo* fileInfo = new FileInfo(fileName, filePath, fileSize, uploaderId, groupId);
+                fileInfo->fullFileSHA1 = fullFileSHA1;
+                
+                // Add to group and global storage
+                g->addSharedFile(fileName, fileInfo);
+                allFiles[fileName] = fileInfo;
+                
+                cout << "[SYNC] File uploaded: " << fileName << " in group " << groupId << endl;
+            }
+        }
+    }
+    else if(operation == "STOP_SHARE") {
+        // Format: groupId fileName uploaderId
+        if(tokens.size() >= 3) {
+            string groupId = tokens[0];
+            string fileName = tokens[1];
+            string uploaderId = tokens[2];
+            
+            if(groups.find(groupId) != groups.end()) {
+                Group* g = groups[groupId];
+                g->removeSharedFile(fileName);
+                allFiles.erase(fileName);
+                
+                cout << "[SYNC] File sharing stopped: " << fileName << " in group " << groupId << endl;
+            }
+        }
     }
     pthread_mutex_unlock(&dsLock);
     cout << "[SYNC IN] " << operation << " " << data << endl;

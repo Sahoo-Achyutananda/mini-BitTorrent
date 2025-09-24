@@ -13,6 +13,8 @@
 #include "colors.h"
 #include "constructs.h"
 #include "synchronize.h"
+#include "sha.h"
+#include "fileops.h"
 
 // functions declarations -
 void * handleConnections(void *arg);
@@ -104,10 +106,6 @@ int main(int argc, char *argv[]){
     return 0;
 }
 
-void writeToClient(int sockfd, string msg){
-    msg+='\n';
-    write(sockfd, msg.c_str(), msg.size());
-}
 
 void* handleTrackerCommands(void* arg) {
     cout << "Tracker console started. Type 'help' for commands." << endl;
@@ -351,6 +349,17 @@ void *handleConnections(void *arg){
             // for debug purpose only
             if(clientName.empty()) writeToClient(newsockfd, "LOGIN NAME NOT REGISTERED !");
             writeToClient(newsockfd, clientName);
+        }else if(tokens[0] == "upload_file") {
+            handleUploadFile(newsockfd, tokens, clientName);
+        }
+        else if(tokens[0] == "list_files") {
+            handleListFiles(newsockfd, tokens, clientName);
+        }
+        else if(tokens[0] == "download_file") {
+            handleDownloadFile(newsockfd, tokens, clientName);
+        }
+        else if(tokens[0] == "stop_share") {
+            handleStopShare(newsockfd, tokens, clientName);
         }
         else{
             writeToClient(newsockfd, "Invalid Command ... \nValid Commands :\n1. create_user <userid> <password>\n2. login <userid> <password>");

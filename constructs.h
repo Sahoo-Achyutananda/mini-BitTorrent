@@ -6,12 +6,46 @@ using namespace std;
 
 class User;
 class Group;
+class FileInfo;
 
 unordered_map<string, User*> users;
 unordered_map<string, Group*> groups;
 unordered_map<string, User*> loggedInUsers; 
 unordered_map<string, Group*> groupOwners; //  initially planned using <User, Group> -> found that it'll increase complexity -> needed to write some custom logic to handle USER as a key
-   
+unordered_map<string, FileInfo*> allFiles; // fileName se FileInfo*
+
+struct FilePiece {
+    int pieceIndex;
+    string sha1Hash;
+    bool isAvailable;
+    vector<pair<string, int>> availablePeers;
+    
+    FilePiece(int index, string hash){
+        this->pieceIndex = index;
+        this->sha1Hash = hash;
+        this->isAvailable = false;
+    }
+};
+
+
+struct FileInfo {
+    string fileName;
+    string filePath;
+    long long fileSize;
+    string fullFileSHA1;
+    vector<FilePiece> pieces;
+    string uploaderId;
+    string groupId;
+    
+    FileInfo(string name, string path, long long size, string uploader, string group) {
+        this->fileName = name;
+        this->filePath = path;
+        this->fileSize = size;
+        this->uploaderId = uploader;
+        this->groupId = group;
+    }
+};
+
 class User{
 private : 
     string userId;
@@ -47,7 +81,8 @@ private:
     string groupId;
     string ownerId;
     unordered_map<string, User*> groupUsers;
-    unordered_map<string, User*> requests; 
+    unordered_map<string, User*> requests;
+    unordered_map<string, FileInfo*> sharedFiles;
 
 public:
     Group(string groupId){
@@ -108,7 +143,42 @@ public:
         }
         return result;
     }
+
+    void addSharedFile(string fileName, FileInfo* fileInfo) {
+        sharedFiles[fileName] = fileInfo;
+    }
+
+    void removeSharedFile(string fileName) {
+        if(sharedFiles.find(fileName) != sharedFiles.end()) {
+            sharedFiles.erase(fileName);
+        }
+    }
+
+    vector<string> getFileList() {
+        vector<string> files;
+        for(auto& [fileName, fileInfo] : sharedFiles) {
+            files.push_back(fileName + " " + to_string(fileInfo->fileSize) + " " + fileInfo->uploaderId);
+        }
+        return files;
+    }
+
+    bool fileExists(string fileName){
+        if(sharedFiles.find(fileName) != sharedFiles.end()) {
+            return true;
+        }
+        return false;
+    }
+
+    // sometimes i used fileinfo - for some uploader info
+    FileInfo* getFileInfo(string fileName) {
+        if(sharedFiles.find(fileName) != sharedFiles.end()) {
+            return sharedFiles[fileName];
+        }
+        return nullptr;
+    }
 };
+
+
 
 
 
@@ -146,5 +216,10 @@ vector<string> tokenizeString(string s){
     return result;
 }
 
+
+void writeToClient(int sockfd, string msg){
+    msg+='\n';
+    write(sockfd, msg.c_str(), msg.size());
+}
 
 #endif // CONSTRUCTS_H
