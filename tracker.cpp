@@ -73,6 +73,10 @@ int main(int argc, char *argv[]){
     pthread_create(&trackerThread, NULL, handleTrackerCommands, NULL);
     pthread_detach(trackerThread);
 
+    pthread_t flusherThread;
+    pthread_create(&flusherThread, NULL, messageFlusher, NULL);
+    pthread_detach(flusherThread);
+
     while(1){
         socklen_t clilen;
         sockaddr_in cliAddr;
@@ -92,6 +96,8 @@ int main(int argc, char *argv[]){
         // pthread_create(&thread, NULL, handleConnections, NULL); this is confusing
         pthread_create(&thread, NULL, handleConnections, (void *)newSock);
         pthread_detach(thread);
+
+        
     }
 
     close(newsockfd);
@@ -144,6 +150,9 @@ void* handleTrackerCommands(void* arg) {
                 cout << groupId << " " << g->getGroupUserCount() << endl;
             }
         }
+        // else if(tokens[0] == "quit"){ // there is a problem here
+        //     break;
+        // }
         else{
             continue;
         }   

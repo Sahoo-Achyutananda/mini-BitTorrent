@@ -2,7 +2,7 @@
 #define SYNCHRONIZE_H
 
 #include "constructs.h"
-#include<bits/stdc++.h>
+#include <bits/stdc++.h>
 #include <iostream>
 #include <fstream>
 #include <sys/socket.h>
@@ -16,6 +16,10 @@ vector<pair<string, int>> trackers;
 pair<string,int> currentTracker;
 vector<pair<string,int>> activeTrackers;
 int currentTrackerNo = 0;
+
+queue<string> pendingMessages;
+pthread_mutex_t queueLock = PTHREAD_MUTEX_INITIALIZER;
+
 
 pthread_mutex_t dsLock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -56,8 +60,11 @@ void sendSyncInfo(pair<string,int> tracker ,string message){
     if(connect(sockfd, (struct sockaddr*)&servAddr, sizeof(servAddr)) == 0) {
         write(sockfd, message.c_str(), message.length());
     }else{
-        perror("connect");
-        return;
+        // perror("connect");
+        // return;
+        pthread_mutex_lock(&queueLock);
+        pendingMessages.push(message);
+        pthread_mutex_unlock(&queueLock);
     }
     
     close(sockfd);
@@ -88,47 +95,52 @@ void syncMessageHelper(string operation, string data){
 // this just parses the sync messages and updates the other trackers - 
 void processSyncMessage(string operation, string data){
     vector<string> tokens = tokenizeString(data);
+    // debug -
+    for(auto &str : tokens){
+        cout << str << " ";
+    }
+    cout << endl;
 
     pthread_mutex_lock(&dsLock); // protect Data structuressssssssssss // added this coz i think it was leading to seg fault
 
     if(operation == "CREATE_USER"){
-        if(tokens.size() >= 2){
+        if(tokens.size() == 2){
             if(users.find(tokens[0]) == users.end()){
                 User* u = new User(tokens[0], tokens[1]);
                 users[tokens[0]] = u;
             }
         }
     }else if(operation == "LOGIN"){
-        if(tokens.size() >= 2 && users.find(tokens[1]) != users.end()){
+        if(tokens.size() == 2 && users.find(tokens[1]) != users.end()){
             User *u = users[tokens[1]];
             loggedInUsers[tokens[1]] = u;
         }
     }else if(operation == "CREATE_GROUP"){
-        if(tokens.size() >= 3 && users.find(tokens[2]) != users.end()){
-            User *u = users[tokens[2]];
-            Group *g = new Group(tokens[1]);
+        if(tokens.size() == 2 && users.find(tokens[1]) != users.end()){
+            User *u = users[tokens[1]];
+            Group *g = new Group(tokens[0]);
             g->addOwner(u->getUserId());
-            groups[tokens[1]] = g;
+            groups[tokens[0]] = g;
+        }else{
+            cout << "something went wrong" << endl;
         }
     }else if(operation == "JOIN_GROUP"){
-        if(tokens.size() >= 3 && users.find(tokens[2]) != users.end() && groups.find(tokens[1]) != groups.end()){
-            Group *g = groups[tokens[1]];
-            g->addRequest(tokens[2]);
+        if(tokens.size() == 2 && users.find(tokens[1]) != users.end() && groups.find(tokens[0]) != groups.end()){
+            Group *g = groups[tokens[0]];
+            g->addRequest(tokens[1]);
         }
     }else if(operation == "LEAVE_GROUP"){
-        if(tokens.size() >= 3 && users.find(tokens[2]) != users.end() && groups.find(tokens[1]) != groups.end()){
-            Group *g = groups[tokens[1]];
-            g->removeUser(tokens[2]);
+        if(tokens.size() == 2 && users.find(tokens[1]) != users.end() && groups.find(tokens[0]) != groups.end()){
+            Group *g = groups[tokens[0]];
+            g->removeUser(tokens[1]);
         }
     }else if(operation == "ACCEPT_REQUEST"){
-        if(tokens.size() >= 3 && groups.find(tokens[1]) != groups.end()){
-            Group *g = groups[tokens[1]];
-            g->acceptRequest(tokens[2]);
+        if(tokens.size() == 2 && groups.find(tokens[0]) != groups.end()){
+            Group *g = groups[tokens[0]];
+            g->acceptRequest(tokens[1]);
         }
     }
-
     pthread_mutex_unlock(&dsLock);
-
     cout << "[SYNC IN] " << operation << " " << data << endl;
 }
 
@@ -148,7 +160,8 @@ void* syncHandler(void* arg) {
     // yeh part of the code is optional -> sometimes hame msg aata hai ki port is already in use -> this part ensures that that doesnt happen !
     int opt = 1; // -> it just sets it to true !
     setsockopt(syncSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    
+    //////////////////////////////////////
+
     if (bind(syncSocket, (struct sockaddr*)&syncAddr, sizeof(syncAddr)) < 0) {
         perror("bind");
         close(syncSocket);
@@ -197,7 +210,7 @@ bool containsPrimary(const vector<pair<string, int>>& activeTrackers) {
 void* healthChecker(void* arg) {
 
     while(1){
-        sleep(10); // check status every 10 sec
+        sleep(5); // check status every 5 sec
 
         vector<pair<string, int>> actTrack;
         
@@ -246,7 +259,49 @@ void* healthChecker(void* arg) {
     return NULL;
 }
 
+void* messageFlusher(void* arg) {
+    while (true) {
+        sleep(5); // retry every 5 sec
 
+        if (pendingMessages.empty() || activeTrackers.empty()) { // prelim check 
+            pthread_mutex_unlock(&queueLock);
+            continue;
+        }
 
+        pthread_mutex_lock(&queueLock);
+        int qSize = pendingMessages.size();
+        pthread_mutex_unlock(&queueLock);
+
+        if (qSize == 0) continue;
+
+        pthread_mutex_lock(&queueLock);
+        queue<string> temp;
+        while (!pendingMessages.empty()) {
+            string msg = pendingMessages.front();
+            pendingMessages.pop();
+
+            int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+            if (sockfd < 0) {
+                temp.push(msg);
+                continue;
+            }
+
+            sockaddr_in servAddr;
+            servAddr.sin_family = AF_INET;
+            servAddr.sin_port = htons(activeTrackers[0].second + 1000);
+            inet_pton(AF_INET, activeTrackers[0].first.c_str(), &servAddr.sin_addr);
+            if (connect(sockfd, (struct sockaddr*)&servAddr, sizeof(servAddr)) == 0) {
+                write(sockfd, msg.c_str(), msg.length());
+                cout << "[FLUSHED] Sent queued message: " << msg << endl;
+            } else {
+                temp.push(msg); // phirse fail hua toh keep it in the queue !
+            }
+            close(sockfd);
+        }
+        pendingMessages = temp;
+        pthread_mutex_unlock(&queueLock);
+    }
+    return NULL;
+}
 
 #endif // SYNCHRONIZE_H

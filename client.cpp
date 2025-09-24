@@ -116,6 +116,7 @@ int main(int argc, char *argv[]){
         }
 
         cout << fontBold << colorGreen << "Connected to tracker " << ipadr << ":" << portno << endl;
+        
         while(1){
             bzero(buffer, 255);
             fgets(buffer, 255, stdin);
@@ -123,7 +124,7 @@ int main(int argc, char *argv[]){
             if(n < 0){
                 perror("write");
                 close(sockfd);
-                trackerIndex++;
+                // trackerIndex++;
                 break;
             }
             bzero(buffer, 255);
@@ -133,13 +134,19 @@ int main(int argc, char *argv[]){
             if(n < 0){
                 perror("read");
                 close(sockfd);
-                trackerIndex++;
+                // trackerIndex++;
                 break;
             }
 
-            printf("Server : %s", buffer);
-            
+            // printf("Server : %s", buffer);
+            cout << fontBold << colorBlue << buffer << reset << endl;
+
+            int l = strncmp("Goodbye", buffer, 7);
+            if(l == 0){
+                break;
+            }
         }
+        trackerIndex++;
     }
 
     close(sockfd);
