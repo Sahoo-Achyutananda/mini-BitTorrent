@@ -13,29 +13,51 @@
 #include <pthread.h>
 #include <fcntl.h>
 
+#include "client_constructs.h"
+#include "client.h"
 #include "colors.h"
 
 using namespace std;
 
-vector<pair<string,int>> trackers;
-int trackerIndex = 0;
-int sockfd = -1;
-bool trackerAlive = false;
-pthread_mutex_t tracker_mutex = PTHREAD_MUTEX_INITIALIZER;
+// vector<pair<string,int>> trackers;
+
 
 // Parse tracker info file
-void parseTrackerInfoFile(string fileName){
-    ifstream file(fileName);
-    string l;
-    while(getline(file,l)){
-        int pos = l.find(':');
-        if(pos != string::npos){
-            string ip = l.substr(0,pos);
-            int port = stoi(l.substr(pos+1));
-            trackers.push_back({ip,port});
-        }
-    }    
-    file.close();
+// void parseTrackerInfoFile(string fileName){
+//     ifstream file(fileName);
+//     string l;
+//     while(getline(file,l)){
+//         int pos = l.find(':');
+//         if(pos != string::npos){
+//             string ip = l.substr(0,pos);
+//             int port = stoi(l.substr(pos+1));
+//             trackers.push_back({ip,port});
+//         }
+//     }    
+//     file.close();
+// }
+
+
+// to solve the tracker bug - 
+bool autoRelogin() {
+    if(!loggedIn || currentUserId.empty()) {
+        return false;
+    }
+    
+    cout << fontBold << colorYellow << "Auto-relogin as " << currentUserId << "..." << reset << endl;
+    
+    string command = "login " + currentUserId + " " + currentPassword;
+    
+    pthread_mutex_lock(&tracker_mutex);
+    if(!trackerAlive || sockfd == -1) {
+        pthread_mutex_unlock(&tracker_mutex);
+        return false;
+    }
+    
+    int n = write(sockfd, command.c_str(), command.length());
+    pthread_mutex_unlock(&tracker_mutex);
+    
+    return n > 0;
 }
 
 pair<string,int> parseIpPort(string s) {
@@ -49,7 +71,7 @@ pair<string,int> parseIpPort(string s) {
     return {ip, port};
 }
 
-// Heartbeat thread: checks tracker health via tracker_port + 1000
+// Heartbeat thread: checks tracker health via tracker_port + 1000 
 void* heartbeat(void* arg){
     while(true){
         sleep(1);
@@ -94,8 +116,7 @@ int main(int argc, char *argv[]){
     }
 
     pair<string,int> clientInfo = parseIpPort(argv[1]);
-    cout << fontBold << colorGreen  << "Client running with IP " << clientInfo.first 
-         << " and port " << clientInfo.second << reset << endl;
+    cout << fontBold << colorGreen  << "Client running with IP " << clientInfo.first << " and port " << clientInfo.second << reset << endl;
 
     parseTrackerInfoFile(string(argv[2]));
 
@@ -142,6 +163,16 @@ int main(int argc, char *argv[]){
         trackerAlive = true;
         pthread_mutex_unlock(&tracker_mutex);
 
+        if(loggedIn && !currentUserId.empty()) {
+            sleep(1);
+            if(autoRelogin()) {
+                cout << fontBold << colorGreen << "Auto-relogin successful!" << reset << endl;
+            } else {
+                cout << fontBold << colorRed << "Auto-relogin failed!" << reset << endl;
+                loggedIn = false;
+            }
+        }
+
         // Set stdin to non-blocking
         int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
         fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
@@ -149,7 +180,7 @@ int main(int argc, char *argv[]){
         // Main input loop using select
         char buffer[256];
         while(trackerAlive){
-            ///////////////////////////////////////////////////////////
+            /////////////////////////////////////////////////////////// this bug was fixed with a lot of help LOL
             fd_set readfds;
             FD_ZERO(&readfds);
             FD_SET(sockfd, &readfds); // tracker socket
@@ -182,6 +213,12 @@ int main(int argc, char *argv[]){
             if(FD_ISSET(STDIN_FILENO, &readfds)){
                 char buffer[256];
                 if(fgets(buffer, sizeof(buffer), stdin)){
+                    // fgets was accessing the \n at the end -> 
+                    string input(buffer);
+                    
+                    if(handleClientCommand(trim(input), sockfd, clientInfo)){ // trim exists in constructs.h -> trim could've been handled 
+                        continue;
+                    }
                     int n = write(sockfd, buffer, strlen(buffer));
                     if(n <= 0){
                         cout << "Write failed, switching tracker...\n";

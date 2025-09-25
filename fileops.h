@@ -3,14 +3,15 @@
 
 
 #include "constructs.h"
+#include "client_constructs.h"
 #include "sha.h"
 #include "synchronize.h"
 #include <openssl/sha.h>
 #include <sys/stat.h>
 
 // File piece calculation
-vector<FilePiece> calculateFilePieces(const string& filePath) {
-    vector<FilePiece> pieces;
+vector<SeedPiece> calculateFilePieces(const string& filePath) {
+    vector<SeedPiece> pieces;
     ifstream file(filePath, ios::binary);
     if(!file.is_open()) return pieces;
     
@@ -23,7 +24,7 @@ vector<FilePiece> calculateFilePieces(const string& filePath) {
         string pieceData(buffer, bytesRead);
         string pieceHash = calculateSHA1(pieceData);
         
-        pieces.push_back(FilePiece(pieceIndex++, pieceHash));
+        pieces.push_back(SeedPiece(pieceIndex++, pieceHash));
     }
     
     file.close();
@@ -36,20 +37,16 @@ long long getFileSize(const string& filePath) {
     return rc == 0 ? stat_buf.st_size : 0;
 }
 
-void handleUploadFile(int newsockfd, vector<string>& tokens, string& clientName) {
-    // upload_file <group_id> <file_path>
-    if(tokens.size() != 3) {
-        writeToClient(newsockfd, "Usage: upload_file <group_id> <file_path>");
-        return;
-    }
-    
+void handleUploadFileTracker(int newsockfd, vector<string>& tokens, string& clientName) {
+    //     string message = "upload_file " + groupId + " " + fileName + " " + filePath + " " + to_string(fileSize) + " " + seedInfo->fullFileSHA + " " + cleintPOrt + " " + clientip + " " hashes ;
+    //                         0                1                2                3                 4                              5                        6                 7             8 to many                
     if(clientName.empty()) {
         writeToClient(newsockfd, "No user is logged in!");
         return;
     }
     
     string groupId = tokens[1];
-    string filePath = tokens[2];
+    string filePath = tokens[3];
     
     // Check if group exists
     if(groups.find(groupId) == groups.end()) {
@@ -63,14 +60,6 @@ void handleUploadFile(int newsockfd, vector<string>& tokens, string& clientName)
         writeToClient(newsockfd, "You are not a member of this group");
         return;
     }
-    
-    // Check if file exists
-    ifstream file(filePath);
-    if(!file.is_open()) {
-        writeToClient(newsockfd, "File not found: " + filePath);
-        return;
-    }
-    file.close();
     
     // Get file name from path
     string fileName = filePath.substr(filePath.find_last_of("/\\") + 1);
@@ -87,25 +76,91 @@ void handleUploadFile(int newsockfd, vector<string>& tokens, string& clientName)
         writeToClient(newsockfd, "Invalid file or empty file");
         return;
     }
-    
+
     // Create file info
     FileInfo* fileInfo = new FileInfo(fileName, filePath, fileSize, clientName, groupId);
     
     // Calculate SHA1 and pieces
-    fileInfo->fullFileSHA1 = calculateFileSHA1(filePath);
-    fileInfo->pieces = calculateFilePieces(filePath);
-    
+    fileInfo->fullFileSHA1 = tokens[5]; // iski zaroorat pad sakta maybe in the future
+
+    for(int i = 8; i < tokens.size(); i++){
+        string l = tokens[i];
+        
+        int pos = l.find(':');
+        if(pos != string::npos){
+            int index = stoi(l.substr(0,pos));
+            string sha = l.substr(pos+1);
+            fileInfo->pieces.push_back(FilePiece(index,sha));
+        }
+    }
+
+    fileInfo->addSeeder(stoi(tokens[6]),tokens[7]); // add seeder to the seeder list
     // Add to group and global storage
     g->addSharedFile(fileName, fileInfo);
     allFiles[fileName] = fileInfo;
     
     // Sync with other trackers
-    string syncData = groupId + " " + fileName + " " + filePath + " " + 
-                     to_string(fileSize) + " " + clientName + " " + fileInfo->fullFileSHA1;
+    string syncData = groupId + " " + fileName + " " + filePath + " " + to_string(fileSize) + " " + clientName + " " + fileInfo->fullFileSHA1;
     syncMessageHelper("UPLOAD_FILE", syncData);
     
     cout << "File uploaded: " << fileName << " by " << clientName << " in group " << groupId << endl;
     writeToClient(newsockfd, "File uploaded successfully");
+}
+
+
+// the client has to do the difficult part
+void handleUploadFileClient(int newsockfd, vector<string>& tokens, pair<string,int> clientInfo) {
+    // upload_file <group_id> <file_path>
+    if(tokens.size() != 3) {
+        cout << colorRed << fontBold << "Usage : upload_file <group_id> <file_path>" << reset << endl;
+        return;
+    }
+    
+    
+    string groupId = tokens[1];
+    string filePath = tokens[2];
+    
+    // Check if file exists
+    ifstream file(filePath);
+    if(!file.is_open()) {
+        cout << colorRed << fontBold << "File not found !" << reset << endl;
+        return;
+    }
+    file.close();
+    
+    // Get file name from path
+    string fileName = filePath.substr(filePath.find_last_of("/\\") + 1);
+    
+    // Calculate file size
+    long long fileSize = getFileSize(filePath);
+    if(fileSize == 0) {
+        cout << colorRed << fontBold << "File is empty" << reset << endl;
+        return;
+    }
+    
+    // Create file info
+    SeedInfo* seedInfo = new SeedInfo(fileName, filePath, groupId, fileSize);
+    
+    // Calculate SHA1 and pieces
+    seedInfo->fullFileSHA = calculateFileSHA1(filePath); // iski zaroorat pad sakta maybe in the future
+    seedInfo->pieces = calculateFilePieces(filePath);
+    
+    string message = "upload_file " + groupId + " " + fileName + " " + filePath + " " + to_string(fileSize) + " " + seedInfo->fullFileSHA + " " + to_string(clientInfo.second) + " " + clientInfo.first + " ";
+    // attaching the piecewise hashes too - 
+    for(auto sp : seedInfo->pieces){
+        message += to_string(sp.pieceIndex);
+        message += ":";
+        message += sp.sha1Hash;
+        message += " ";
+    }
+
+    int n = write(newsockfd, message.c_str(), message.size());
+    if(n <= 0) {
+        perror("Error sending upload info to tracker");
+    } else {
+        cout << "debug : " << message << endl;
+        cout << colorGreen << fontBold << "File metadata sent to tracker successfully!" << reset << endl;
+    }
 }
 
 void handleListFiles(int newsockfd, vector<string>& tokens, string& clientName) {
@@ -145,6 +200,9 @@ void handleListFiles(int newsockfd, vector<string>& tokens, string& clientName) 
     }
 }
 
+
+//////////////////////////////////////////////////////////////////////////////
+///////// The following commands will share info that is to be intercepted by the client -> pehle aisa nahi hita tha 
 void handleDownloadFile(int newsockfd, vector<string>& tokens, string& clientName) {
     // download_file <group_id> <file_name> <destination_path>
     if(tokens.size() != 4) {
@@ -181,16 +239,17 @@ void handleDownloadFile(int newsockfd, vector<string>& tokens, string& clientNam
         return;
     }
     
-    // Send file metadata to client for download
+    // Send file metadata to client for download -> i have to include the code for seeders and leechers - 
     string response = "FILE_META|" + fileName + "|" + to_string(fileInfo->fileSize) + 
                      "|" + fileInfo->fullFileSHA1 + "|" + to_string(fileInfo->pieces.size());
     
-    // Add piece information
-    for(const auto& piece : fileInfo->pieces) {
-        response += "|" + to_string(piece.pieceIndex) + ":" + piece.sha1Hash;
-    }
+    // // Add piece information
+    // for(const auto& piece : fileInfo->pieces) {
+    //     response += "|" + to_string(piece.pieceIndex) + ":" + piece.sha1Hash;
+    // }
     
-    writeToClient(newsockfd, response);
+    writeToClient(newsockfd, response); // this has to be intercepted by the client -> in the previous commands intercepted there were only message showing
+    // need to add command reading capabilities to the client too .... Ahhh !! here we go again
 }
 
 void handleStopShare(int newsockfd, vector<string>& tokens, string& clientName) {

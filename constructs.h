@@ -14,7 +14,19 @@ unordered_map<string, User*> loggedInUsers;
 unordered_map<string, Group*> groupOwners; //  initially planned using <User, Group> -> found that it'll increase complexity -> needed to write some custom logic to handle USER as a key
 unordered_map<string, FileInfo*> allFiles; // fileName se FileInfo*
 
-struct FilePiece {
+// class ClientAddr{
+// public :
+//     string ipaddress;
+//     int port;
+
+//     ClientAddr(string ip, int port){
+//         this->ipaddress = ip;
+//         this->port = port;
+//     }
+// };
+
+class FilePiece{
+public :
     int pieceIndex;
     string sha1Hash;
     bool isAvailable;
@@ -27,8 +39,8 @@ struct FilePiece {
     }
 };
 
-
-struct FileInfo {
+class FileInfo{
+public :
     string fileName;
     string filePath;
     long long fileSize;
@@ -36,6 +48,8 @@ struct FileInfo {
     vector<FilePiece> pieces;
     string uploaderId;
     string groupId;
+    vector<pair<int,string>> seeders; // list of people having the file
+    vector<pair<int,string>> downloaders; // list of people downloading . .. maybe not needed ! 
     
     FileInfo(string name, string path, long long size, string uploader, string group) {
         this->fileName = name;
@@ -43,6 +57,10 @@ struct FileInfo {
         this->fileSize = size;
         this->uploaderId = uploader;
         this->groupId = group;
+    }
+
+    void addSeeder(int port, string ip){
+        this->seeders.push_back({port, ip});
     }
 };
 
@@ -177,10 +195,6 @@ public:
         return nullptr;
     }
 };
-
-
-
-
 
 bool isGroupOwner(string userId){
     return groupOwners.find(userId) != groupOwners.end();

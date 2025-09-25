@@ -108,7 +108,6 @@ int main(int argc, char *argv[]){
 
 
 void* handleTrackerCommands(void* arg) {
-    cout << "Tracker console started. Type 'help' for commands." << endl;
     string current_user; // Console's own session
     
     while (true) {
@@ -349,16 +348,16 @@ void *handleConnections(void *arg){
             // for debug purpose only
             if(clientName.empty()) writeToClient(newsockfd, "LOGIN NAME NOT REGISTERED !");
             writeToClient(newsockfd, clientName);
-        }else if(tokens[0] == "upload_file") {
-            handleUploadFile(newsockfd, tokens, clientName);
+        }else if(tokens[0] == "upload_file"){
+            handleUploadFileTracker(newsockfd, tokens, clientName);
         }
-        else if(tokens[0] == "list_files") {
+        else if(tokens[0] == "list_files"){
             handleListFiles(newsockfd, tokens, clientName);
         }
-        else if(tokens[0] == "download_file") {
+        else if(tokens[0] == "download_file"){
             handleDownloadFile(newsockfd, tokens, clientName);
         }
-        else if(tokens[0] == "stop_share") {
+        else if(tokens[0] == "stop_share"){
             handleStopShare(newsockfd, tokens, clientName);
         }
         else{
