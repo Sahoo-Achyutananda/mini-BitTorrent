@@ -9,10 +9,7 @@ string currentUserId = "";
 string currentPassword = "";
 bool loggedIn = false;
 
-int trackerIndex = 0;
-int sockfd = -1;
-bool trackerAlive = false;
-pthread_mutex_t tracker_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 
 // why this exists - 
 // initially i made the code in such a way that the client sends a request to the tracker and the tracker responds back with some acknowledgement.
@@ -22,7 +19,8 @@ pthread_mutex_t tracker_mutex = PTHREAD_MUTEX_INITIALIZER;
 // void showActiveDownloads();
 
 
-
+// modified this thing to show more details for debugginghgggggggggggggggggggggggg
+// modified the formatting using GPT
 void showActiveDownloads(){
     pthread_mutex_lock(&download_mutex);
     
@@ -39,14 +37,38 @@ void showActiveDownloads(){
             double progress = (double)completedPieces / download->totalPieces * 100.0;
             
             if(download->isComplete) {
-                cout << fontBold << colorGreen << "[Completed] [" << download->groupId << "] " << fileName << reset << endl;
+                cout << fontBold << colorGreen << "[Completed] [" << download->groupId << "] " << fileName << " -> " << download->destPath << reset << endl;
             } else {
-                cout << fontBold << colorBlue << "[Downloading] [" << download->groupId << "] " << fileName << " (" << fixed << setprecision(1) << progress << "%)" << reset << endl;
+                cout << fontBold << colorBlue << "[Downloading] [" << download->groupId << "] " << fileName << " (" << fixed << setprecision(1) << progress << "%) " << completedPieces << "/" << download->totalPieces << " pieces" << reset << endl;
+                
+                // Show seeder count for each piece
+                cout << "  Piece status: ";
+                for(int i = 0; i < min(10, (int)download->pieces.size()); i++) {
+                    if(download->downloadedPieces[i]) {
+                        cout << colorGreen << "✓" << reset;
+                    } else {
+                        cout << colorRed << "(" << download->pieces[i].seeders.size() << ")" << reset;
+                    }
+                    cout << " ";
+                }
+                if(download->pieces.size() > 10) cout << "...";
+                cout << endl;
             }
         }
     }
     
     pthread_mutex_unlock(&download_mutex);
+    
+    // Show seeding info
+    pthread_mutex_lock(&seed_mutex);
+    if(!seedingFiles.empty()) {
+        cout << fontBold << colorYellow << "\nSeeding Files:" << reset << endl;
+        for(auto& [fileName, seedInfo] : seedingFiles) {
+            cout << "  [" << seedInfo->groupId << "] " << fileName 
+                 << " (" << seedInfo->pieces.size() << " pieces)" << endl;
+        }
+    }
+    pthread_mutex_unlock(&seed_mutex);
 }
 
 // formatting generated using GPT
@@ -77,12 +99,12 @@ void showHelp(){
 }
 
 
-// Modified login handling in client
-bool handleLogin(string userId, string password) {
+// Modified login handling in client -> the problem was, th logedin details was lost at the tracker end ... maybe the loggein details was not even needed -> dont know !
+bool handleLogin(string userId, string password){
     string command = "login " + userId + " " + password;
     
     pthread_mutex_lock(&tracker_mutex);
-    if(!trackerAlive || sockfd == -1) {
+    if(!trackerAlive || sockfd == -1){
         pthread_mutex_unlock(&tracker_mutex);
         return false;
     }
@@ -90,7 +112,7 @@ bool handleLogin(string userId, string password) {
     int n = write(sockfd, command.c_str(), command.length());
     pthread_mutex_unlock(&tracker_mutex);
     
-    if(n > 0) {
+    if(n > 0){
         // Store credentials for auto-relogin
         currentUserId = userId;
         currentPassword = password;
@@ -121,6 +143,31 @@ bool handleClientCommand(string input, int sockfd, pair<string,int> clientInfo){
     }
     if(tokens[0] == "show_downloads"){
         showActiveDownloads();
+        return true;
+    }
+    if(tokens[0] == "debug_pieces"){
+        // Debug command to show piece information for a file - kyunki i need to see 
+        if(tokens.size() != 2) {
+            cout << "Usage: debug_pieces <filename>" << endl;
+            return true;
+        }
+        
+        pthread_mutex_lock(&download_mutex);
+        auto it = activeDownloads.find(tokens[1]);
+        if(it != activeDownloads.end()) {
+            DownloadInfo* download = it->second;
+            cout << "Piece information for " << tokens[1] << ":" << endl;
+            for(const auto& piece : download->pieces) {
+                cout << "  Piece " << piece.pieceIndex << ": " << piece.seeders.size() 
+                     << " seeders, downloaded=" << (download->downloadedPieces[piece.pieceIndex] ? "yes" : "no") << endl;
+                for(const auto& seeder : piece.seeders) {
+                    cout << "    -> " << seeder.ip << ":" << seeder.port << endl;
+                }
+            }
+        } else {
+            cout << "File not found in active downloads" << endl;
+        }
+        pthread_mutex_unlock(&download_mutex);
         return true;
     }
     else if(tokens[0] == "help"){

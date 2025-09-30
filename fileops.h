@@ -10,7 +10,7 @@
 #include <sys/stat.h>
 
 // File piece calculation
-vector<SeedPiece> calculateFilePieces(const string& filePath) {
+vector<SeedPiece> calculateFilePieces(const string& filePath){
     vector<SeedPiece> pieces;
     ifstream file(filePath, ios::binary);
     if(!file.is_open()) return pieces;
@@ -19,7 +19,7 @@ vector<SeedPiece> calculateFilePieces(const string& filePath) {
     char buffer[PIECE_SIZE];
     int pieceIndex = 0;
     
-    while(file.read(buffer, PIECE_SIZE) || file.gcount() > 0) { // gcount returns the total bytes read i the last unformatted input operation
+    while(file.read(buffer, PIECE_SIZE) || file.gcount() > 0){ // gcount returns the total bytes read i the last unformatted input operation
         int bytesRead = file.gcount();
         string pieceData(buffer, bytesRead);
         string pieceHash = calculateSHA1(pieceData);
@@ -31,16 +31,16 @@ vector<SeedPiece> calculateFilePieces(const string& filePath) {
     return pieces;
 }
 
-long long getFileSize(const string& filePath) {
+long long getFileSize(const string& filePath){
     struct stat stat_buf;
     int rc = stat(filePath.c_str(), &stat_buf);
     return rc == 0 ? stat_buf.st_size : 0;
 }
 
-void handleUploadFileTracker(int newsockfd, vector<string>& tokens, string& clientName) {
+void handleUploadFileTracker(int newsockfd, vector<string>& tokens, string& clientName){
     //     string message = "upload_file " + groupId + " " + fileName + " " + filePath + " " + to_string(fileSize) + " " + seedInfo->fullFileSHA + " " + cleintPOrt + " " + clientip + " " hashes ;
     //                         0                1                2                3                 4                              5                        6                 7             8 to many                
-    if(clientName.empty()) {
+    if(clientName.empty()){
         writeToClient(newsockfd, "No user is logged in!");
         return;
     }
@@ -49,14 +49,14 @@ void handleUploadFileTracker(int newsockfd, vector<string>& tokens, string& clie
     string filePath = tokens[3];
     
     // Check if group exists
-    if(groups.find(groupId) == groups.end()) {
+    if(groups.find(groupId) == groups.end()){
         writeToClient(newsockfd, "Group doesn't exist");
         return;
     }
     
     // Check if user is member of group
     Group* g = groups[groupId];
-    if(!g->checkUserExistance(clientName)) {
+    if(!g->checkUserExistance(clientName)){
         writeToClient(newsockfd, "You are not a member of this group");
         return;
     }
@@ -65,14 +65,14 @@ void handleUploadFileTracker(int newsockfd, vector<string>& tokens, string& clie
     string fileName = filePath.substr(filePath.find_last_of("/\\") + 1);
     
     // Check if file already exists in group
-    if(g->getFileInfo(fileName) != nullptr) {
+    if(g->getFileInfo(fileName) != nullptr){
         writeToClient(newsockfd, "File already exists in group");
         return;
     }
     
     // Calculate file size
     long long fileSize = getFileSize(filePath);
-    if(fileSize == 0) {
+    if(fileSize == 0){
         writeToClient(newsockfd, "Invalid file or empty file");
         return;
     }
@@ -90,6 +90,7 @@ void handleUploadFileTracker(int newsockfd, vector<string>& tokens, string& clie
         if(pos != string::npos){
             int index = stoi(l.substr(0,pos));
             string sha = l.substr(pos+1);
+            cout << "debug - " << index << " " << sha << endl;
             fileInfo->pieces.push_back(FilePiece(index,sha));
         }
     }
@@ -100,7 +101,7 @@ void handleUploadFileTracker(int newsockfd, vector<string>& tokens, string& clie
     allFiles[fileName] = fileInfo;
     
     // Sync with other trackers
-    string syncData = groupId + " " + fileName + " " + filePath + " " + to_string(fileSize) + " " + clientName + " " + fileInfo->fullFileSHA1;
+    string syncData = groupId + " " + fileName + " " + filePath + " " + to_string(fileSize) + " " + clientName + " " + fileInfo->fullFileSHA1 + " " + tokens[6] + " " + tokens[7];
     syncMessageHelper("UPLOAD_FILE", syncData);
     
     cout << "File uploaded: " << fileName << " by " << clientName << " in group " << groupId << endl;
@@ -109,20 +110,19 @@ void handleUploadFileTracker(int newsockfd, vector<string>& tokens, string& clie
 
 
 // the client has to do the difficult part
-void handleUploadFileClient(int newsockfd, vector<string>& tokens, pair<string,int> clientInfo) {
+void handleUploadFileClient(int newsockfd, vector<string>& tokens, pair<string,int> clientInfo){
     // upload_file <group_id> <file_path>
-    if(tokens.size() != 3) {
+    if(tokens.size() != 3){
         cout << colorRed << fontBold << "Usage : upload_file <group_id> <file_path>" << reset << endl;
         return;
     }
-    
     
     string groupId = tokens[1];
     string filePath = tokens[2];
     
     // Check if file exists
     ifstream file(filePath);
-    if(!file.is_open()) {
+    if(!file.is_open()){
         cout << colorRed << fontBold << "File not found !" << reset << endl;
         return;
     }
@@ -133,7 +133,7 @@ void handleUploadFileClient(int newsockfd, vector<string>& tokens, pair<string,i
     
     // Calculate file size
     long long fileSize = getFileSize(filePath);
-    if(fileSize == 0) {
+    if(fileSize == 0){
         cout << colorRed << fontBold << "File is empty" << reset << endl;
         return;
     }
@@ -155,22 +155,29 @@ void handleUploadFileClient(int newsockfd, vector<string>& tokens, pair<string,i
     }
 
     int n = write(newsockfd, message.c_str(), message.size());
-    if(n <= 0) {
+    if(n <= 0){
         perror("Error sending upload info to tracker");
+        // Remove from seeding files if send failed
+        pthread_mutex_lock(&seed_mutex);
+        seedingFiles.erase(fileName);
+        pthread_mutex_unlock(&seed_mutex);
     } else {
         cout << "debug : " << message << endl;
+        pthread_mutex_lock(&seed_mutex);
+        seedingFiles[fileName] = seedInfo;
+        pthread_mutex_unlock(&seed_mutex);
         cout << colorGreen << fontBold << "File metadata sent to tracker successfully!" << reset << endl;
     }
 }
 
-void handleListFiles(int newsockfd, vector<string>& tokens, string& clientName) {
+void handleListFiles(int newsockfd, vector<string>& tokens, string& clientName){
     // list_files <group_id>
-    if(tokens.size() != 2) {
+    if(tokens.size() != 2){
         writeToClient(newsockfd, "Usage: list_files <group_id>");
         return;
     }
     
-    if(clientName.empty()) {
+    if(clientName.empty()){
         writeToClient(newsockfd, "No user is logged in!");
         return;
     }
@@ -178,23 +185,23 @@ void handleListFiles(int newsockfd, vector<string>& tokens, string& clientName) 
     string groupId = tokens[1];
     
     // Check if group exists
-    if(groups.find(groupId) == groups.end()) {
+    if(groups.find(groupId) == groups.end()){
         writeToClient(newsockfd, "Group doesn't exist");
         return;
     }
     
     // Check if user is member of group
     Group* g = groups[groupId];
-    if(!g->checkUserExistance(clientName)) {
+    if(!g->checkUserExistance(clientName)){
         writeToClient(newsockfd, "You are not a member of this group");
         return;
     }
     
     vector<string> files = g->getFileList();
-    if(files.empty()) {
+    if(files.empty()){
         writeToClient(newsockfd, "No files in this group");
     } else {
-        for(const string& file : files) {
+        for(const string& file : files){
             writeToClient(newsockfd, file);
         }
     }
@@ -203,14 +210,14 @@ void handleListFiles(int newsockfd, vector<string>& tokens, string& clientName) 
 
 //////////////////////////////////////////////////////////////////////////////
 ///////// The following commands will share info that is to be intercepted by the client -> pehle aisa nahi hita tha 
-void handleDownloadFile(int newsockfd, vector<string>& tokens, string& clientName) {
+void handleDownloadFile(int newsockfd, vector<string>& tokens, string& clientName){
     // download_file <group_id> <file_name> <destination_path>
-    if(tokens.size() != 4) {
+    if(tokens.size() != 4){
         writeToClient(newsockfd, "Usage: download_file <group_id> <file_name> <destination_path>");
         return;
     }
     
-    if(clientName.empty()) {
+    if(clientName.empty()){
         writeToClient(newsockfd, "No user is logged in!");
         return;
     }
@@ -220,46 +227,60 @@ void handleDownloadFile(int newsockfd, vector<string>& tokens, string& clientNam
     string destPath = tokens[3];
     
     // Check if group exists
-    if(groups.find(groupId) == groups.end()) {
+    if(groups.find(groupId) == groups.end()){
         writeToClient(newsockfd, "Group doesn't exist");
         return;
     }
     
     // Check if user is member of group
     Group* g = groups[groupId];
-    if(!g->checkUserExistance(clientName)) {
+    if(!g->checkUserExistance(clientName)){
         writeToClient(newsockfd, "You are not a member of this group");
         return;
     }
     
     // Check if file exists in group
     FileInfo* fileInfo = g->getFileInfo(fileName);
-    if(fileInfo == nullptr) {
+    if(fileInfo == nullptr){
         writeToClient(newsockfd, "File not found in group");
         return;
     }
     
-    // Send file metadata to client for download -> i have to include the code for seeders and leechers - 
+    // Send file metadata to client for download -> i have to include the code for seeders and leechers - -> then share the seeder info !
+    // there was an update where whenever a piece is completely available after download, the 
+    // string response = "FILE_META|" + fileName + "|" + to_string(fileInfo->fileSize) + "|" + fileInfo->fullFileSHA1 + "|" + to_string(fileInfo->pieces.size());
     string response = "FILE_META|" + fileName + "|" + to_string(fileInfo->fileSize) + 
-                     "|" + fileInfo->fullFileSHA1 + "|" + to_string(fileInfo->pieces.size());
+                 "|" + fileInfo->fullFileSHA1 + "|" + to_string(fileInfo->pieces.size()) +
+                 "|" + groupId + "|" + destPath;
+
+    for(auto& piece : fileInfo->pieces){
+        response += "|" + to_string(piece.pieceIndex) + ":" + piece.sha1Hash + ":";
+        // index:hash:ip:port;ip:port;ip:port
+        // Add seeder list for this specific piece
+        for(int i = 0; i < piece.seeders.size(); i++){
+            response += piece.seeders[i].second + ":" + to_string(piece.seeders[i].first);
+            if(i < piece.seeders.size() - 1)
+                response += ";";
+            // else{
+            //     response += "|";
+            // }
+        }
+    }
     
-    // // Add piece information
-    // for(const auto& piece : fileInfo->pieces) {
-    //     response += "|" + to_string(piece.pieceIndex) + ":" + piece.sha1Hash;
-    // }
-    
+    cout << response << endl;
+
     writeToClient(newsockfd, response); // this has to be intercepted by the client -> in the previous commands intercepted there were only message showing
     // need to add command reading capabilities to the client too .... Ahhh !! here we go again
 }
 
-void handleStopShare(int newsockfd, vector<string>& tokens, string& clientName) {
+void handleStopShare(int newsockfd, vector<string>& tokens, string& clientName){
     // stop_share <group_id> <file_name>
-    if(tokens.size() != 3) {
+    if(tokens.size() != 3){
         writeToClient(newsockfd, "Usage: stop_share <group_id> <file_name>");
         return;
     }
     
-    if(clientName.empty()) {
+    if(clientName.empty()){
         writeToClient(newsockfd, "No user is logged in!");
         return;
     }
@@ -268,7 +289,7 @@ void handleStopShare(int newsockfd, vector<string>& tokens, string& clientName) 
     string fileName = tokens[2];
     
     // Check if group exists
-    if(groups.find(groupId) == groups.end()) {
+    if(groups.find(groupId) == groups.end()){
         writeToClient(newsockfd, "Group doesn't exist");
         return;
     }
@@ -276,13 +297,13 @@ void handleStopShare(int newsockfd, vector<string>& tokens, string& clientName) 
     Group* g = groups[groupId];
     FileInfo* fileInfo = g->getFileInfo(fileName);
     
-    if(fileInfo == nullptr) {
+    if(fileInfo == nullptr){
         writeToClient(newsockfd, "File not found in group");
         return;
     }
     
     // Check if user is the uploader
-    if(fileInfo->uploaderId != clientName) {
+    if(fileInfo->uploaderId != clientName){
         writeToClient(newsockfd, "You can only stop sharing your own files");
         return;
     }

@@ -30,7 +30,7 @@ public :
     int pieceIndex;
     string sha1Hash;
     bool isAvailable;
-    vector<pair<string, int>> availablePeers;
+    vector<pair<int, string>> seeders; // seeders of a particular file piece - 
     
     FilePiece(int index, string hash){
         this->pieceIndex = index;
@@ -61,6 +61,10 @@ public :
 
     void addSeeder(int port, string ip){
         this->seeders.push_back({port, ip});
+
+        for (auto &piece : pieces){
+            piece.seeders.push_back({port, ip});
+        }
     }
 };
 

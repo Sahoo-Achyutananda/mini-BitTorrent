@@ -360,6 +360,9 @@ void *handleConnections(void *arg){
         else if(tokens[0] == "stop_share"){
             handleStopShare(newsockfd, tokens, clientName);
         }
+        else if(tokens[0] == "piece_completed"){
+            handlePieceCompleted(newsockfd, tokens, clientName);
+        }
         else{
             writeToClient(newsockfd, "Invalid Command ... \nValid Commands :\n1. create_user <userid> <password>\n2. login <userid> <password>");
         }  

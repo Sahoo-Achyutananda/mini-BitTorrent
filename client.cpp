@@ -16,6 +16,7 @@
 #include "client_constructs.h"
 #include "client.h"
 #include "colors.h"
+#include "download.h"
 
 using namespace std;
 
@@ -37,6 +38,7 @@ using namespace std;
 //     file.close();
 // }
 
+pair<string,int> clientInfo;
 
 // to solve the tracker bug - 
 bool autoRelogin() {
@@ -95,8 +97,7 @@ void* heartbeat(void* arg){
             inet_pton(AF_INET, ip.c_str(), &healthAddr.sin_addr);
 
             if(connect(healthSock, (struct sockaddr*)&healthAddr, sizeof(healthAddr)) < 0){
-                cout << fontBold << colorRed << "Tracker " << ip << ":" 
-                     << port-1000 << " down! Switching..." << reset << endl;
+                cout << fontBold << colorRed << "Tracker " << ip << ":" << port-1000 << " down! Switching..." << reset << endl;
                 trackerAlive = false;
                 close(sockfd);
             }
@@ -115,11 +116,11 @@ int main(int argc, char *argv[]){
         return 1;
     }
 
-    pair<string,int> clientInfo = parseIpPort(argv[1]);
+    clientInfo = parseIpPort(argv[1]);
     cout << fontBold << colorGreen  << "Client running with IP " << clientInfo.first << " and port " << clientInfo.second << reset << endl;
 
     parseTrackerInfoFile(string(argv[2]));
-
+    initializeDownloadServer(clientInfo.second);
     // Start heartbeat thread
     pthread_t hbThread;
     pthread_create(&hbThread, nullptr, heartbeat, nullptr);
@@ -196,8 +197,22 @@ int main(int argc, char *argv[]){
             }
 
             // Tracker sent something
+            // if(FD_ISSET(sockfd, &readfds)){
+            //     char buffer[256];
+            //     int n = read(sockfd, buffer, sizeof(buffer)-1);
+            //     if(n <= 0){
+            //         cout << "Tracker disconnected!" << endl;
+            //         trackerAlive = false;
+            //         close(sockfd);
+            //     } else {
+            //         buffer[n] = '\0';
+            //         cout << buffer << endl;
+            //     }
+            // }
+
+            // change kiya to handle file meta - but not sure it'll work
             if(FD_ISSET(sockfd, &readfds)){
-                char buffer[256];
+                char buffer[1024]; // large buffer coz the message will have piece info and stuff
                 int n = read(sockfd, buffer, sizeof(buffer)-1);
                 if(n <= 0){
                     cout << "Tracker disconnected!" << endl;
@@ -205,7 +220,13 @@ int main(int argc, char *argv[]){
                     close(sockfd);
                 } else {
                     buffer[n] = '\0';
-                    cout << buffer << endl;
+                    string trackerResponse(buffer, n);
+                    
+                    if(trackerResponse.find("FILE_META|") == 0) {
+                        handleFileMetadata(trackerResponse);
+                    } else {
+                        cout << trackerResponse << endl;
+                    }
                 }
             }
 

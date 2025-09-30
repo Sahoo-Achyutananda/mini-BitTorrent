@@ -180,6 +180,50 @@ void processSyncMessage(string operation, string data){
             }
         }
     }
+    else if(operation == "UPLOAD_FILE") {
+        // Format jo bhejte hai : groupId fileName filePath fileSize uploaderId fullFileSHA1 clientPort clientIP piece0:hash piece1:hash ...
+        if(tokens.size() >= 8) {
+            string groupId = tokens[0];
+            string fileName = tokens[1];
+            string filePath = tokens[2];
+            long long fileSize = stoll(tokens[3]);
+            string uploaderId = tokens[4];
+            string fullFileSHA1 = tokens[5];
+            int clientPort = stoi(tokens[6]);
+            string clientIP = tokens[7];
+            
+            if(groups.find(groupId) != groups.end()) {
+                Group* g = groups[groupId];
+                
+                FileInfo* fileInfo = new FileInfo(fileName, filePath, fileSize, uploaderId, groupId);
+                fileInfo->fullFileSHA1 = fullFileSHA1;
+                
+                // Parse and add piece information
+                for(int i = 8; i < tokens.size(); i++) {
+                    string pieceStr = tokens[i];
+                    int pos = pieceStr.find(':');
+                    if(pos != string::npos) {
+                        int index = stoi(pieceStr.substr(0, pos));
+                        string sha = pieceStr.substr(pos + 1);
+                        
+                        FilePiece piece(index, sha);
+                        piece.isAvailable = true;
+                        piece.seeders.push_back({clientPort, clientIP}); // Add initial seeder
+                        
+                        fileInfo->pieces.push_back(piece);
+                    }
+                }
+                
+                fileInfo->addSeeder(clientPort, clientIP);
+                
+                // Add to group and global storage
+                g->addSharedFile(fileName, fileInfo);
+                allFiles[fileName] = fileInfo;
+                
+                cout << "[SYNC IN] File uploaded: " << fileName << " in group " << groupId << " with " << fileInfo->pieces.size() << " pieces" << endl; // debug purpose only
+            }
+        }
+    }
     pthread_mutex_unlock(&dsLock);
     cout << "[SYNC IN] " << operation << " " << data << endl;
 }
