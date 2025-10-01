@@ -76,11 +76,12 @@ void handleUploadFileTracker(int newsockfd, vector<string>& tokens, string& clie
     }
     
     // Calculate file size
-    long long fileSize = getFileSize(filePath);
-    if(fileSize == 0){
-        writeToClient(newsockfd, "Invalid file or empty file");
-        return;
-    }
+    long long fileSize = stoi(tokens[4]);
+    // if(fileSize == 0){
+    //     writeToClient(newsockfd, filePath.c_str());
+    //     writeToClient(newsockfd, "Invalid file or empty file");
+    //     return;
+    // }
 
     // Create file info
     FileInfo* fileInfo = new FileInfo(fileName, filePath, fileSize, clientName, groupId);
