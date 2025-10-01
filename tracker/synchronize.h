@@ -58,7 +58,7 @@ void sendSyncInfo(pair<string,int> tracker ,string message){
     servAddr.sin_port = htons(tracker.second + 1000);
     inet_pton(AF_INET, tracker.first.c_str(), &servAddr.sin_addr);
 
-    if(connect(sockfd, (struct sockaddr*)&servAddr, sizeof(servAddr)) == 0) {
+    if(connect(sockfd, (struct sockaddr*)&servAddr, sizeof(servAddr)) == 0){
         write(sockfd, message.c_str(), message.length());
     }else{
         // perror("connect");
@@ -140,9 +140,9 @@ void processSyncMessage(string operation, string data){
             Group *g = groups[tokens[0]];
             g->acceptRequest(tokens[1]);
         }
-    }else if(operation == "UPLOAD_FILE") {
+    }else if(operation == "UPLOAD_FILE"){
 
-        if(tokens.size() >= 6) {
+        if(tokens.size() >= 6){
             string groupId = tokens[0];
             string fileName = tokens[1];
             string filePath = tokens[2];
@@ -150,7 +150,7 @@ void processSyncMessage(string operation, string data){
             string uploaderId = tokens[4];
             string fullFileSHA1 = tokens[5];
             
-            if(groups.find(groupId) != groups.end()) {
+            if(groups.find(groupId) != groups.end()){
                 Group* g = groups[groupId];
                 
                 // Create file info (without calculating pieces since we don't have the actual file)
@@ -165,14 +165,14 @@ void processSyncMessage(string operation, string data){
             }
         }
     }
-    else if(operation == "STOP_SHARE") {
+    else if(operation == "STOP_SHARE"){
         // Format: groupId fileName uploaderId
-        if(tokens.size() >= 3) {
+        if(tokens.size() >= 3){
             string groupId = tokens[0];
             string fileName = tokens[1];
             string uploaderId = tokens[2];
             
-            if(groups.find(groupId) != groups.end()) {
+            if(groups.find(groupId) != groups.end()){
                 Group* g = groups[groupId];
                 g->removeSharedFile(fileName);
                 allFiles.erase(fileName);
@@ -181,9 +181,9 @@ void processSyncMessage(string operation, string data){
             }
         }
     }
-    else if(operation == "UPLOAD_FILE") {
+    else if(operation == "UPLOAD_FILE"){
         // Format jo bhejte hai : groupId fileName filePath fileSize uploaderId fullFileSHA1 clientPort clientIP piece0:hash piece1:hash ...
-        if(tokens.size() >= 8) {
+        if(tokens.size() >= 8){
             string groupId = tokens[0];
             string fileName = tokens[1];
             string filePath = tokens[2];
@@ -193,17 +193,17 @@ void processSyncMessage(string operation, string data){
             int clientPort = stoi(tokens[6]);
             string clientIP = tokens[7];
             
-            if(groups.find(groupId) != groups.end()) {
+            if(groups.find(groupId) != groups.end()){
                 Group* g = groups[groupId];
                 
                 FileInfo* fileInfo = new FileInfo(fileName, filePath, fileSize, uploaderId, groupId);
                 fileInfo->fullFileSHA1 = fullFileSHA1;
                 
                 // Parse and add piece information
-                for(int i = 8; i < tokens.size(); i++) {
+                for(int i = 8; i < tokens.size(); i++){
                     string pieceStr = tokens[i];
                     int pos = pieceStr.find(':');
-                    if(pos != string::npos) {
+                    if(pos != string::npos){
                         int index = stoi(pieceStr.substr(0, pos));
                         string sha = pieceStr.substr(pos + 1);
                         
@@ -225,14 +225,67 @@ void processSyncMessage(string operation, string data){
             }
         }
     }
+    else if(operation == "REMOVE_SEEDER"){
+        // Format: groupId fileName clientIP clientPort
+        if(tokens.size() == 4){
+            string groupId = tokens[0];
+            string fileName = tokens[1];
+            string clientIP = tokens[2];
+            int clientPort = stoi(tokens[3]);
+            
+            if(groups.find(groupId) != groups.end()){
+                Group* g = groups[groupId];
+                FileInfo* fileInfo = g->getFileInfo(fileName);
+                
+                if(fileInfo){
+                    // Remove from all pieces
+                    for(auto& piece : fileInfo->pieces){
+                        for(auto it = piece.seeders.begin(); it != piece.seeders.end(); ){
+                            if(it->second == clientIP && it->first == clientPort){
+                                it = piece.seeders.erase(it);
+                            } else {
+                                ++it;
+                            }
+                        }
+                    }
+                    
+                    // Remove from main seeder list
+                    for(auto it = fileInfo->seeders.begin(); it != fileInfo->seeders.end(); ){
+                        if(it->second == clientIP && it->first == clientPort){
+                            it = fileInfo->seeders.erase(it);
+                        } else {
+                            ++it;
+                        }
+                    }
+                    
+                    cout << "[SYNC] Removed seeder from " << fileName << endl;
+                }
+            }
+        }
+    }
+    else if(operation == "REMOVE_FILE"){
+        // Format: groupId fileName
+        if(tokens.size() == 2){
+            string groupId = tokens[0];
+            string fileName = tokens[1];
+            
+            if(groups.find(groupId) != groups.end()){
+                Group* g = groups[groupId];
+                g->removeSharedFile(fileName);
+                allFiles.erase(fileName);
+                
+                cout << "[SYNC] Removed file: " << fileName << endl;
+            }
+        }
+    }
     pthread_mutex_unlock(&dsLock);
     cout << "[SYNC IN] " << operation << " " << data << endl;
 }
 
 
-void* syncHandler(void* arg) {
+void* syncHandler(void* arg){
     int syncSocket = socket(AF_INET, SOCK_STREAM, 0);
-    if (syncSocket < 0) {
+    if (syncSocket < 0){
         perror("socket");
         return NULL;
     }
@@ -247,7 +300,7 @@ void* syncHandler(void* arg) {
     setsockopt(syncSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     //////////////////////////////////////
 
-    if (bind(syncSocket, (struct sockaddr*)&syncAddr, sizeof(syncAddr)) < 0) {
+    if (bind(syncSocket, (struct sockaddr*)&syncAddr, sizeof(syncAddr)) < 0){
         perror("bind");
         close(syncSocket);
         return NULL;
@@ -256,7 +309,7 @@ void* syncHandler(void* arg) {
     listen(syncSocket, 5);
     //debug -  cout << "Sync handler listening on port " << currentTracker.second + 1000 << endl;
     
-    while (true) {
+    while (true){
         struct sockaddr_in client_addr;
         socklen_t client_len = sizeof(client_addr);
         int clientSock = accept(syncSocket, (struct sockaddr*)&client_addr, &client_len);
@@ -265,12 +318,12 @@ void* syncHandler(void* arg) {
         
         char buffer[1024];
         int n = read(clientSock, buffer, sizeof(buffer) - 1);
-        if (n > 0) {
+        if (n > 0){
             buffer[n] = '\0';
             string message(buffer);
             
             int pos = message.find('|');
-            if (pos != string::npos) {
+            if (pos != string::npos){
                 string operation = message.substr(0, pos);
                 string data = message.substr(pos + 1);
                 processSyncMessage(operation, data);
@@ -283,23 +336,23 @@ void* syncHandler(void* arg) {
     return NULL;
 }
 
-bool containsPrimary(const vector<pair<string, int>>& activeTrackers) {
-    for (const auto& tracker : activeTrackers) {
-        if (tracker.second == trackers[0].second) { // I Assuming tracker 0 is designated primary
+bool containsPrimary(const vector<pair<string, int>>& activeTrackers){
+    for (const auto& tracker : activeTrackers){
+        if (tracker.second == trackers[0].second){ // I Assuming tracker 0 is designated primary
             return true;
         }
     }
     return false;
 }
 
-void* healthChecker(void* arg) {
+void* healthChecker(void* arg){
 
     while(1){
         sleep(5); // check status every 5 sec
 
         vector<pair<string, int>> actTrack;
         
-        for (const auto& tracker : trackers) {
+        for (const auto& tracker : trackers){
             if (tracker == currentTracker) continue; // fixed the ghost connection issue LOL !
             int sockfd = socket(AF_INET, SOCK_STREAM, 0);
             if (sockfd < 0) continue;
@@ -317,7 +370,7 @@ void* healthChecker(void* arg) {
             /////////////////////////////
 
             // 2 sec mei reply nahi aaya toh - tata tata bye bye
-            if(connect(sockfd, (struct sockaddr*)&servAddr, sizeof(servAddr)) == 0) {
+            if(connect(sockfd, (struct sockaddr*)&servAddr, sizeof(servAddr)) == 0){
                 actTrack.push_back(tracker);
             }
             close(sockfd);
@@ -344,11 +397,11 @@ void* healthChecker(void* arg) {
     return NULL;
 }
 
-void* messageFlusher(void* arg) {
-    while (true) {
+void* messageFlusher(void* arg){
+    while (true){
         sleep(5); // retry every 5 sec
 
-        if (pendingMessages.empty() || activeTrackers.empty()) { // prelim check 
+        if (pendingMessages.empty() || activeTrackers.empty()){ // prelim check 
             pthread_mutex_unlock(&queueLock);
             continue;
         }
@@ -361,12 +414,12 @@ void* messageFlusher(void* arg) {
 
         pthread_mutex_lock(&queueLock);
         queue<string> temp;
-        while (!pendingMessages.empty()) {
+        while (!pendingMessages.empty()){
             string msg = pendingMessages.front();
             pendingMessages.pop();
 
             int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-            if (sockfd < 0) {
+            if (sockfd < 0){
                 temp.push(msg);
                 continue;
             }
@@ -375,7 +428,7 @@ void* messageFlusher(void* arg) {
             servAddr.sin_family = AF_INET;
             servAddr.sin_port = htons(activeTrackers[0].second + 1000);
             inet_pton(AF_INET, activeTrackers[0].first.c_str(), &servAddr.sin_addr);
-            if (connect(sockfd, (struct sockaddr*)&servAddr, sizeof(servAddr)) == 0) {
+            if (connect(sockfd, (struct sockaddr*)&servAddr, sizeof(servAddr)) == 0){
                 write(sockfd, msg.c_str(), msg.length());
                 cout << "[FLUSHED] Sent queued message: " << msg << endl;
             } else {

@@ -142,6 +142,41 @@ bool handleClientCommand(string input, int sockfd, pair<string,int> clientInfo){
         showActiveDownloads();
         return true;
     }
+    if(tokens[0] == "stop_share"){
+        if(tokens.size() != 3){
+            cout << colorRed << fontBold << "Usage: stop_share <group_id> <file_name>" << reset << endl;
+            return true;
+        }
+        
+        string groupId = tokens[1];
+        string fileName = tokens[2];
+        
+        // Check if we're actually seeding this file
+        pthread_mutex_lock(&seed_mutex);
+        auto it = seedingFiles.find(fileName);
+        if(it == seedingFiles.end()) {
+            pthread_mutex_unlock(&seed_mutex);
+            cout << colorRed << fontBold << "Not seeding this file" << reset << endl;
+            return true;
+        }
+        
+        // Remove from local seeding
+        delete it->second;
+        seedingFiles.erase(it);
+        pthread_mutex_unlock(&seed_mutex);
+        
+        // Notify tracker with client info - i'm passing some extra commands
+        string command = "stop_share " + groupId + " " + fileName + " " + clientInfo.first + " " + to_string(clientInfo.second) + "\n";
+        
+        pthread_mutex_lock(&tracker_mutex);
+        if(trackerAlive && sockfd != -1) {
+            write(sockfd, command.c_str(), command.length());
+        }
+        pthread_mutex_unlock(&tracker_mutex);
+        
+        cout << fontBold << colorGreen << "Stopped seeding: " << fileName << reset << endl;
+        return true;
+    }
     if(tokens[0] == "debug_pieces"){
         // Debug command to show piece information for a file - kyunki i need to see 
         if(tokens.size() != 2) {

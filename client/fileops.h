@@ -281,10 +281,62 @@ void handleDownloadFile(int newsockfd, vector<string>& tokens, string& clientNam
     // need to add command reading capabilities to the client too .... Ahhh !! here we go again
 }
 
+
+// it wasnt as required !
+// void handleStopShare(int newsockfd, vector<string>& tokens, string& clientName){
+//     // stop_share <group_id> <file_name>
+//     if(tokens.size() != 3){
+//         writeToClient(newsockfd, "Usage: stop_share <group_id> <file_name>");
+//         return;
+//     }
+    
+//     if(clientName.empty()){
+//         writeToClient(newsockfd, "No user is logged in!");
+//         return;
+//     }
+    
+//     string groupId = tokens[1];
+//     string fileName = tokens[2];
+    
+//     // Check if group exists
+//     if(groups.find(groupId) == groups.end()){
+//         writeToClient(newsockfd, "Group doesn't exist");
+//         return;
+//     }
+    
+//     Group* g = groups[groupId];
+//     FileInfo* fileInfo = g->getFileInfo(fileName);
+    
+//     if(fileInfo == nullptr){
+//         writeToClient(newsockfd, "File not found in group");
+//         return;
+//     }
+    
+//     // Check if user is the uploader
+//     if(fileInfo->uploaderId != clientName){
+//         writeToClient(newsockfd, "You can only stop sharing your own files");
+//         return;
+//     }
+    
+//     // Remove from group and global storage
+//     g->removeSharedFile(fileName);
+//     allFiles.erase(fileName);
+    
+//     // Sync with other trackers
+//     syncMessageHelper("STOP_SHARE", groupId + " " + fileName + " " + clientName);
+    
+//     cout << "File sharing stopped: " << fileName << " by " << clientName << endl;
+//     writeToClient(newsockfd, "File sharing stopped successfully");
+// }
+
+// the other parameters of stop_share are sent from the backedn - the user has to just type the filename and group id ->
+// there are two cases jinko handle karna hai -
+// 1. the cleint is the only seeder -> remove metadata from tracker completely
+// 2. there are other seeders
 void handleStopShare(int newsockfd, vector<string>& tokens, string& clientName){
     // stop_share <group_id> <file_name>
-    if(tokens.size() != 3){
-        writeToClient(newsockfd, "Usage: stop_share <group_id> <file_name>");
+    if(tokens.size() != 5){
+        writeToClient(newsockfd, "Usage: stop_share <group_id> <file_name> <client_ip> <client_port> // other params are sent from the backend ... ");
         return;
     }
     
@@ -310,21 +362,57 @@ void handleStopShare(int newsockfd, vector<string>& tokens, string& clientName){
         return;
     }
     
-    // Check if user is the uploader
-    if(fileInfo->uploaderId != clientName){
-        writeToClient(newsockfd, "You can only stop sharing your own files");
+    string clientIP = tokens[3];
+    int clientPort = stoi(tokens[4]);
+    
+    // Remove this specific seeder from ALL pieces
+    bool wasSeeder = false;
+    for(auto& piece : fileInfo->pieces) {
+        for(auto it = piece.seeders.begin(); it != piece.seeders.end(); ) {
+            if(it->second == clientIP && it->first == clientPort) {
+                it = piece.seeders.erase(it);
+                wasSeeder = true;
+            } else {
+                ++it;
+            }
+        }
+    }
+    
+    // Remove from main seeder list
+    for(auto it = fileInfo->seeders.begin(); it != fileInfo->seeders.end(); ) {
+        if(it->second == clientIP && it->first == clientPort) {
+            it = fileInfo->seeders.erase(it);
+            wasSeeder = true;
+        } else {
+            ++it;
+        }
+    }
+    
+    if(!wasSeeder) {
+        writeToClient(newsockfd, "You are not seeding this file");
         return;
     }
     
-    // Remove from group and global storage
-    g->removeSharedFile(fileName);
-    allFiles.erase(fileName);
+    // Check if ANY seeders remain
+    bool hasOtherSeeders = !fileInfo->seeders.empty();
     
-    // Sync with other trackers
-    syncMessageHelper("STOP_SHARE", groupId + " " + fileName + " " + clientName);
+    if(!hasOtherSeeders) {
+        // No seeders left - remove file metadata completely
+        g->removeSharedFile(fileName);
+        allFiles.erase(fileName);
+        cout << "File removed from group (no seeders left): " << fileName << endl;
+        
+        // Sync removal with other trackers
+        syncMessageHelper("REMOVE_FILE", groupId + " " + fileName);
+    } else {
+        cout << clientName << " stopped seeding " << fileName 
+             << " (" << fileInfo->seeders.size() << " seeders remaining)" << endl;
+        
+        // Sync seeder removal with other trackers
+        syncMessageHelper("REMOVE_SEEDER", groupId + " " + fileName + " " + clientIP + " " + to_string(clientPort));
+    }
     
-    cout << "File sharing stopped: " << fileName << " by " << clientName << endl;
-    writeToClient(newsockfd, "File sharing stopped successfully");
+    writeToClient(newsockfd, "Stopped sharing file");
 }
 
 
