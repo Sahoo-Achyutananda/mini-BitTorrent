@@ -64,8 +64,7 @@ void showActiveDownloads(){
     if(!seedingFiles.empty()) {
         cout << fontBold << colorYellow << "\nSeeding Files:" << reset << endl;
         for(auto& [fileName, seedInfo] : seedingFiles) {
-            cout << "  [" << seedInfo->groupId << "] " << fileName 
-                 << " (" << seedInfo->pieces.size() << " pieces)" << endl;
+            cout << "  [" << seedInfo->groupId << "] " << fileName << " (" << seedInfo->pieces.size() << " pieces)" << endl;
         }
     }
     pthread_mutex_unlock(&seed_mutex);
@@ -101,7 +100,7 @@ void showHelp(){
 
 // Modified login handling in client -> the problem was, th logedin details was lost at the tracker end ... maybe the loggein details was not even needed -> dont know !
 bool handleLogin(string userId, string password){
-    string command = "login " + userId + " " + password;
+    string command = "login " + userId + " " + password + "\n";
     
     pthread_mutex_lock(&tracker_mutex);
     if(!trackerAlive || sockfd == -1){
@@ -170,7 +169,37 @@ bool handleClientCommand(string input, int sockfd, pair<string,int> clientInfo){
         pthread_mutex_unlock(&download_mutex);
         return true;
     }
-    else if(tokens[0] == "help"){
+    if(tokens[0] == "quit" || tokens[0] == "exit"){
+        cout << fontBold << colorYellow << "Shutting down client..." << reset << endl;
+        
+        // Notify tracker of logout if logged in
+        if(loggedIn && !currentUserId.empty()) {
+            string logoutCmd = "logout\n";
+            pthread_mutex_lock(&tracker_mutex);
+            if(trackerAlive && sockfd != -1) {
+                write(sockfd, logoutCmd.c_str(), logoutCmd.length());
+                usleep(100000);
+            }
+            pthread_mutex_unlock(&tracker_mutex);
+        }
+        
+        // Clean shutdown
+        pthread_mutex_lock(&tracker_mutex);
+        if(sockfd != -1) {
+            close(sockfd);
+            usleep(100000);
+            sockfd = -1;
+        }
+        trackerAlive = false;
+        pthread_mutex_unlock(&tracker_mutex);
+        
+        // Stop download server
+        downloadServerRunning = false;
+        
+        cout << fontBold << colorGreen << "Goodbye!" << reset << endl;
+        exit(0);  // Clean exit
+    }
+    if(tokens[0] == "help"){
         showHelp();
         return true;
     }

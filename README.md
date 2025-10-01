@@ -1,3 +1,8 @@
+```bash
+dd if=/dev/urandom of=onegb.bin bs=1M count=1000
+```
+
+
 # mini-BitTorrent
 A simple distributed file system (a mini bit torrent) built using C++.
 

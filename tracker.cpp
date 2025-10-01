@@ -9,11 +9,12 @@
 #include <netdb.h>
 #include <arpa/inet.h> // for inet_ntoa -> prints the ipv4 address of the client -> that's its use so far ! - 13sept
 #include <pthread.h>
-
+#include <iostream>
 #include "colors.h"
 #include "constructs.h"
 #include "synchronize.h"
 #include "sha.h"
+#include "utils.h"
 #include "fileops.h"
 
 // functions declarations -
@@ -112,7 +113,8 @@ void* handleTrackerCommands(void* arg) {
     
     while (true) {
         string input;
-        cin >> input;
+        // cin >> input;
+        getline(cin, input);
         
         if (input.empty()) continue;
         
@@ -164,26 +166,61 @@ void *handleConnections(void *arg){
     delete (int*)arg;
 
     string clientName;
-    char buffer[255];
-    int n;
+    
     
     while(1){
-        bzero(buffer, 255);
-        n = read(newsockfd, buffer, 255);
-        if(n < 0){
-            perror("read");
-            return NULL;
-        }
+        // char buffer[1024];
+        // string command;
+        // int n;
+
+        // while ((n = read(newsockfd, buffer, sizeof(buffer))) > 0) {
+        //     command.append(buffer, n);
+        // }
+
+        // // n = read(newsockfd, buffer, 1024);
+        // if(n < 0){
+        //     perror("read");
+        //     return NULL;
+        // }
         // debug -
         // printf("Client : %s", buffer);
         // ----------------------------------------
         // string cmd(buffer); // this gave me seg fault -> cause i was reading more than the actual bytes that was read
-        string cmd(buffer, n);
+        string cmd = readLine(newsockfd);
+
+        // client ka quit command dikkat de rha hai - 
+        if(cmd.empty()) {
+            // Try a peek to see if socket is still alive
+            char testByte;
+            int peekResult = recv(newsockfd, &testByte, 1, MSG_PEEK | MSG_DONTWAIT);
+            
+            if(peekResult == 0) {
+                // Socket closed - actual disconnection
+                cout << fontBold << colorYellow << "Client " << clientName << " disconnected" << reset << endl;
+                
+                pthread_mutex_lock(&dsLock);
+                if(!clientName.empty()) {
+                    loggedInUsers.erase(clientName);
+                }
+                pthread_mutex_unlock(&dsLock);
+                
+                close(newsockfd);
+                return nullptr;
+            }
+            // Otherwise, just empty input - continue
+            continue;
+        }
+
+
         
         // debug -
         // cout << cmd << endl;
         vector<string> tokens = tokenizeString(cmd);
         // cout << tokens[0] << endl;
+
+        if(tokens.empty()) {
+            continue; 
+        }
 
         if(tokens[0] == "create_user"){
             // cout << "Client wants to create a new user !!! " << endl;
@@ -349,6 +386,7 @@ void *handleConnections(void *arg){
             if(clientName.empty()) writeToClient(newsockfd, "LOGIN NAME NOT REGISTERED !");
             writeToClient(newsockfd, clientName);
         }else if(tokens[0] == "upload_file"){
+            cout << colorBlue << cmd << reset << endl;
             handleUploadFileTracker(newsockfd, tokens, clientName);
         }
         else if(tokens[0] == "list_files"){

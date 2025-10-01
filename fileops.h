@@ -23,7 +23,7 @@ vector<SeedPiece> calculateFilePieces(const string& filePath){
         int bytesRead = file.gcount();
         string pieceData(buffer, bytesRead);
         string pieceHash = calculateSHA1(pieceData);
-        
+        // cout << "Debug : " << pieceHash << endl;
         pieces.push_back(SeedPiece(pieceIndex++, pieceHash));
     }
     
@@ -45,6 +45,11 @@ void handleUploadFileTracker(int newsockfd, vector<string>& tokens, string& clie
         return;
     }
     
+    // for(auto tok : tokens){
+    //     cout << colorRed << fontBold << tok << " " << reset;
+    // }
+    // cout << endl;
+
     string groupId = tokens[1];
     string filePath = tokens[3];
     
@@ -90,7 +95,7 @@ void handleUploadFileTracker(int newsockfd, vector<string>& tokens, string& clie
         if(pos != string::npos){
             int index = stoi(l.substr(0,pos));
             string sha = l.substr(pos+1);
-            cout << "debug - " << index << " " << sha << endl;
+            // cout << "debug - " << index << " " << sha << endl;
             fileInfo->pieces.push_back(FilePiece(index,sha));
         }
     }
@@ -154,6 +159,8 @@ void handleUploadFileClient(int newsockfd, vector<string>& tokens, pair<string,i
         message += " ";
     }
 
+    message+='\n';
+
     int n = write(newsockfd, message.c_str(), message.size());
     if(n <= 0){
         perror("Error sending upload info to tracker");
@@ -162,7 +169,7 @@ void handleUploadFileClient(int newsockfd, vector<string>& tokens, pair<string,i
         seedingFiles.erase(fileName);
         pthread_mutex_unlock(&seed_mutex);
     } else {
-        cout << "debug : " << message << endl;
+        // cout << "debug : " << message << endl;
         pthread_mutex_lock(&seed_mutex);
         seedingFiles[fileName] = seedInfo;
         pthread_mutex_unlock(&seed_mutex);
@@ -267,7 +274,7 @@ void handleDownloadFile(int newsockfd, vector<string>& tokens, string& clientNam
         }
     }
     
-    cout << response << endl;
+    // cout << response << endl;
 
     writeToClient(newsockfd, response); // this has to be intercepted by the client -> in the previous commands intercepted there were only message showing
     // need to add command reading capabilities to the client too .... Ahhh !! here we go again

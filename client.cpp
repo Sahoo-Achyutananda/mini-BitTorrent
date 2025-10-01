@@ -211,17 +211,50 @@ int main(int argc, char *argv[]){
             // }
 
             // change kiya to handle file meta - but not sure it'll work
-            if(FD_ISSET(sockfd, &readfds)){
-                char buffer[1024]; // large buffer coz the message will have piece info and stuff
-                int n = read(sockfd, buffer, sizeof(buffer)-1);
-                if(n <= 0){
-                    cout << "Tracker disconnected!" << endl;
-                    trackerAlive = false;
-                    close(sockfd);
-                } else {
-                    buffer[n] = '\0';
-                    string trackerResponse(buffer, n);
+            // if(FD_ISSET(sockfd, &readfds)){
+            //     char buffer[1024]; // large buffer coz the message will have piece info and stuff -> it should be even larger
+            //     int n = read(sockfd, buffer, sizeof(buffer)-1);
+            //     if(n <= 0){
+            //         cout << "Tracker disconnected!" << endl;
+            //         trackerAlive = false;
+            //         close(sockfd);
+            //     } else {
+            //         buffer[n] = '\0';
+            //         string trackerResponse(buffer, n);
                     
+            //         if(trackerResponse.find("FILE_META|") == 0) {
+            //             handleFileMetadata(trackerResponse);
+            //         } else {
+            //             cout << trackerResponse << endl;
+            //         }
+            //     }
+            // }
+            
+            if(FD_ISSET(sockfd, &readfds)){
+                string trackerResponse;
+                char buffer[4096];
+                
+                // Keep reading until we get a newline
+                while(true) {
+                    int n = read(sockfd, buffer, sizeof(buffer)-1);
+                    if(n <= 0) {
+                        cout << "Tracker disconnected!" << endl;
+                        trackerAlive = false;
+                        close(sockfd);
+                        break;
+                    }
+                    
+                    buffer[n] = '\0';
+                    trackerResponse.append(buffer, n);
+                    
+                    // Check if we got the complete message (ends with \n)
+                    if(trackerResponse.back() == '\n') {
+                        trackerResponse.pop_back();  // Remove trailing \n
+                        break;
+                    }
+                }
+                
+                if(!trackerResponse.empty()) {
                     if(trackerResponse.find("FILE_META|") == 0) {
                         handleFileMetadata(trackerResponse);
                     } else {
