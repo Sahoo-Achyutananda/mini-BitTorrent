@@ -26,10 +26,55 @@ void* handleTrackerCommands(void* arg);
 
 bool shutdownServer = false;
 
+void handleLogout(int newsockfd, string& clientName){
+    if(clientName.empty()){
+        writeToClient(newsockfd, "No user is logged in!");
+        return;
+    }
+    
+    pthread_mutex_lock(&dsLock);
+    
+    // Remove user from logged-in users
+    loggedInUsers.erase(clientName);
+    
+    // Remove user as seeder from ALL files they're seeding
+    for(auto& [fileName, fileInfo] : allFiles){
+        fileInfo->removeSeederByUser(clientName);
+        
+        // If no seeders remain, remove file completely
+        if(fileInfo->seeders.empty()){
+            // Find and remove from group
+            if(groups.find(fileInfo->groupId) != groups.end()){
+                groups[fileInfo->groupId]->removeSharedFile(fileName);
+            }
+        }
+    }
+    
+    // Clean up files with no seeders
+    for(auto it = allFiles.begin(); it != allFiles.end(); ){
+        if(it->second->seeders.empty()){
+            delete it->second;
+            it = allFiles.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    
+    pthread_mutex_unlock(&dsLock);
+    
+    // Sync with other trackers
+    syncMessageHelper("LOGOUT", clientName);
+    
+    cout << fontBold << colorYellow << clientName << " logged out" << reset << endl;
+    writeToClient(newsockfd, "Logged out successfully");
+    
+    clientName.clear(); // Clear session
+}
+
 int main(int argc, char *argv[]){
     // set<User> users;
     // set<Group> groups;
-    if (argc != 3) {
+    if (argc != 3){
         cerr << fontBold << colorRed << "Usage: " << argv[0] << " <port> <tracker_info_file> <tracker_id>" << reset << endl;
         return 1;
     }
@@ -110,10 +155,10 @@ int main(int argc, char *argv[]){
 }
 
 
-void* handleTrackerCommands(void* arg) {
+void* handleTrackerCommands(void* arg){
     string current_user; // Console's own session
     
-    while (true) {
+    while (true){
         string input;
         // cin >> input;
         getline(cin, input);
@@ -149,6 +194,7 @@ void* handleTrackerCommands(void* arg) {
                 cout << groupId << " " << g->getGroupUserCount() << endl;
             }
         }
+        
         else if(input == "quit"){ // there is a problem here
             // shutdownServer = true;
             cout << "Shutting Down" << endl;
@@ -175,7 +221,7 @@ void *handleConnections(void *arg){
         // string command;
         // int n;
 
-        // while ((n = read(newsockfd, buffer, sizeof(buffer))) > 0) {
+        // while ((n = read(newsockfd, buffer, sizeof(buffer))) > 0){
         //     command.append(buffer, n);
         // }
 
@@ -191,17 +237,17 @@ void *handleConnections(void *arg){
         string cmd = readLine(newsockfd);
 
         // client ka quit command dikkat de rha hai - 
-        if(cmd.empty()) {
+        if(cmd.empty()){
             // Try a peek to see if socket is still alive
             char testByte;
             int peekResult = recv(newsockfd, &testByte, 1, MSG_PEEK | MSG_DONTWAIT);
             
-            if(peekResult == 0) {
+            if(peekResult == 0){
                 // Socket closed - actual disconnection
                 cout << fontBold << colorYellow << "Client " << clientName << " disconnected" << reset << endl;
                 
                 pthread_mutex_lock(&dsLock);
-                if(!clientName.empty()) {
+                if(!clientName.empty()){
                     loggedInUsers.erase(clientName);
                 }
                 pthread_mutex_unlock(&dsLock);
@@ -220,7 +266,7 @@ void *handleConnections(void *arg){
         vector<string> tokens = tokenizeString(cmd);
         // cout << tokens[0] << endl;
 
-        if(tokens.empty()) {
+        if(tokens.empty()){
             continue; 
         }
 
@@ -400,8 +446,22 @@ void *handleConnections(void *arg){
         else if(tokens[0] == "stop_share"){
             handleStopShare(newsockfd, tokens, clientName);
         }
-        else if(tokens[0] == "piece_completed"){
+        else if(tokens[0] == "piece_completed"){ // this is used internally !
             handlePieceCompleted(newsockfd, tokens, clientName);
+        }
+        else if(tokens[0] == "logout"){
+            handleLogout(newsockfd, clientName);
+        }
+        else if(tokens[0] == "download_complete") {
+            string groupId = tokens[1];
+            string fileName = tokens[2];
+            string userId = tokens[3];
+            string ip = tokens[4];
+            int port = stoi(tokens[5]);
+
+            if(allFiles.find(fileName) != allFiles.end()) {
+                allFiles[fileName]->addSeeder(userId, ip, port);
+            }
         }
         else{
             writeToClient(newsockfd, "Invalid Command ... \nValid Commands :\n1. create_user <userid> <password>\n2. login <userid> <password>");

@@ -22,6 +22,7 @@ void* downloadWorker(void* arg);
 bool downloadPieceFromPeer(string& fileName, int pieceIndex, string& expectedHash, PieceSeederInfo& peer);
 void mergePiecesToFile(string& fileName);
 void notifyTrackerPieceCompleted(string& groupId, string& fileName, int pieceIndex);
+void notifyTrackerDownloadComplete(string& groupId, string& fileName);
 
 // Initialize download server - without pool
 void initializeDownloadServer(int basePort){
@@ -248,16 +249,20 @@ void handleFileMetadata(string response){
         
         DownloadPieceInfo piece(pieceIndex, pieceHash);
         
-        // Parse seeder list: "ip1:port1;ip2:port2"
+        // Parse seeder list: "userId1:ip1:port1;userId2:ip2:port2"
         if(!seedersStr.empty()){
             stringstream seederStream(seedersStr);
             string seederInfo;
             while(getline(seederStream, seederInfo, ';')){
-                size_t colonPos = seederInfo.find(':');
-                if(colonPos != string::npos){
-                    string ip = seederInfo.substr(0, colonPos);
-                    int port = stoi(seederInfo.substr(colonPos + 1));
-                    piece.addSeeder(ip, port);
+                // Split by colons: userId:ip:port
+                size_t firstColon = seederInfo.find(':');
+                size_t secondColon = seederInfo.find(':', firstColon + 1);
+                
+                if(firstColon != string::npos && secondColon != string::npos){
+                    string userId = seederInfo.substr(0, firstColon);
+                    string ip = seederInfo.substr(firstColon + 1, secondColon - firstColon - 1);
+                    int port = stoi(seederInfo.substr(secondColon + 1));
+                    piece.addSeeder(userId, ip, port);
                 }
             }
         }
@@ -581,13 +586,30 @@ void mergePiecesToFile(string& fileName){
     pthread_mutex_unlock(&seed_mutex);
     
     cout << fontBold << colorGreen << fileName << "File merged successfully: " << destPath << reset << endl;
+    notifyTrackerDownloadComplete(download->groupId, fileName);
+
 }
 
 void notifyTrackerPieceCompleted(string& groupId, string& fileName, int pieceIndex){
-    // Get client info (you'll need to pass this from main)
-    extern pair<string,int> clientInfo; // Declare as extern
+    // Get client info (you'll need to pass this from main) - i did
+    extern pair<string,int> clientInfo;
+    extern string currentUserId;
     
-    string command = "piece_completed " + groupId + " " + fileName + " " + to_string(pieceIndex) + " " + clientInfo.first + " " + to_string(clientInfo.second) + "\n";
+    string command = "piece_completed " + groupId + " " + fileName + " " + to_string(pieceIndex) + " " + currentUserId + " "  + clientInfo.first + " " + to_string(clientInfo.second) + "\n";
+    
+    pthread_mutex_lock(&tracker_mutex);
+    if(trackerAlive && sockfd != -1){
+        write(sockfd, command.c_str(), command.length());
+    }
+    pthread_mutex_unlock(&tracker_mutex);
+}
+
+// to tell the tracker that the complete download has been completed !
+void notifyTrackerDownloadComplete(string& groupId, string& fileName){
+    extern pair<string,int> clientInfo;
+    extern string currentUserId;
+    
+    string command = "download_complete " + groupId + " " + fileName + " " + currentUserId + " " + clientInfo.first + " " + to_string(clientInfo.second) + "\n";
     
     pthread_mutex_lock(&tracker_mutex);
     if(trackerAlive && sockfd != -1){

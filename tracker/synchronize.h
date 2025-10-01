@@ -165,6 +165,39 @@ void processSyncMessage(string operation, string data){
             }
         }
     }
+    else if(operation == "PIECE_COMPLETED"){
+        // Format: groupId fileName pieceIndex userId clientIP clientPort
+        if(tokens.size() == 6){
+            string groupId = tokens[0];
+            string fileName = tokens[1];
+            int pieceIndex = stoi(tokens[2]);
+            string userId = tokens[3];
+            string clientIP = tokens[4];
+            int clientPort = stoi(tokens[5]);
+            
+            if(groups.find(groupId) != groups.end()){
+                Group* g = groups[groupId];
+                FileInfo* fileInfo = g->getFileInfo(fileName);
+                
+                if(fileInfo && pieceIndex >= 0 && pieceIndex < fileInfo->pieces.size()){
+                    bool alreadySeeder = false;
+                    for(const auto& seeder : fileInfo->pieces[pieceIndex].seeders){
+                        if(seeder.userId == userId && seeder.ip == clientIP && seeder.port == clientPort){
+                            alreadySeeder = true;
+                            break;
+                        }
+                    }
+                    
+                    if(!alreadySeeder){
+                        fileInfo->pieces[pieceIndex].seeders.push_back(
+                            SeederInfo(userId, clientIP, clientPort)
+                        );
+                        fileInfo->pieces[pieceIndex].isAvailable = true;
+                    }
+                }
+            }
+        }
+    }
     else if(operation == "STOP_SHARE"){
         // Format: groupId fileName uploaderId
         if(tokens.size() >= 3){
@@ -183,15 +216,16 @@ void processSyncMessage(string operation, string data){
     }
     else if(operation == "UPLOAD_FILE"){
         // Format jo bhejte hai : groupId fileName filePath fileSize uploaderId fullFileSHA1 clientPort clientIP piece0:hash piece1:hash ...
-        if(tokens.size() >= 8){
+        if(tokens.size() == 9){
             string groupId = tokens[0];
             string fileName = tokens[1];
             string filePath = tokens[2];
             long long fileSize = stoll(tokens[3]);
             string uploaderId = tokens[4];
             string fullFileSHA1 = tokens[5];
-            int clientPort = stoi(tokens[6]);
-            string clientIP = tokens[7];
+            string userId = tokens[6];
+            int clientPort = stoi(tokens[7]);
+            string clientIP = tokens[8]; 
             
             if(groups.find(groupId) != groups.end()){
                 Group* g = groups[groupId];
@@ -200,7 +234,7 @@ void processSyncMessage(string operation, string data){
                 fileInfo->fullFileSHA1 = fullFileSHA1;
                 
                 // Parse and add piece information
-                for(int i = 8; i < tokens.size(); i++){
+                for(int i = 9; i < tokens.size(); i++){
                     string pieceStr = tokens[i];
                     int pos = pieceStr.find(':');
                     if(pos != string::npos){
@@ -209,13 +243,13 @@ void processSyncMessage(string operation, string data){
                         
                         FilePiece piece(index, sha);
                         piece.isAvailable = true;
-                        piece.seeders.push_back({clientPort, clientIP}); // Add initial seeder
+                        piece.seeders.push_back(SeederInfo(userId, clientIP, clientPort));
                         
                         fileInfo->pieces.push_back(piece);
                     }
                 }
                 
-                fileInfo->addSeeder(clientPort, clientIP);
+                fileInfo->addSeeder(userId, clientIP, clientPort);
                 
                 // Add to group and global storage
                 g->addSharedFile(fileName, fileInfo);
@@ -230,8 +264,9 @@ void processSyncMessage(string operation, string data){
         if(tokens.size() == 4){
             string groupId = tokens[0];
             string fileName = tokens[1];
-            string clientIP = tokens[2];
-            int clientPort = stoi(tokens[3]);
+            string userId = tokens[2];
+            string clientIP = tokens[3];
+            int clientPort = stoi(tokens[4]);
             
             if(groups.find(groupId) != groups.end()){
                 Group* g = groups[groupId];
@@ -241,7 +276,7 @@ void processSyncMessage(string operation, string data){
                     // Remove from all pieces
                     for(auto& piece : fileInfo->pieces){
                         for(auto it = piece.seeders.begin(); it != piece.seeders.end(); ){
-                            if(it->second == clientIP && it->first == clientPort){
+                            if(it->ip == clientIP && it->port == clientPort && it->userId == userId){
                                 it = piece.seeders.erase(it);
                             } else {
                                 ++it;
@@ -249,9 +284,8 @@ void processSyncMessage(string operation, string data){
                         }
                     }
                     
-                    // Remove from main seeder list
                     for(auto it = fileInfo->seeders.begin(); it != fileInfo->seeders.end(); ){
-                        if(it->second == clientIP && it->first == clientPort){
+                        if(it->ip == clientIP && it->port == clientPort && it->userId == userId){
                             it = fileInfo->seeders.erase(it);
                         } else {
                             ++it;

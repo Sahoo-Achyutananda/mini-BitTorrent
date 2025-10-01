@@ -7,7 +7,10 @@
 #include "./tracker/constructs.h"
 #include "./tracker/synchronize.h"
 #include "client_constructs.h"
+#include "client.h"
 #include "sha.h"
+
+extern string currentUserId;
 
 // File piece calculation
 vector<SeedPiece> calculateFilePieces(const string& filePath){
@@ -50,8 +53,20 @@ void handleUploadFileTracker(int newsockfd, vector<string>& tokens, string& clie
     // }
     // cout << endl;
 
+    if(tokens.size() < 9) {
+        writeToClient(newsockfd, "Invalid upload_file format");
+        return;
+    }
+    
     string groupId = tokens[1];
+    string fileName = tokens[2];
     string filePath = tokens[3];
+    long long fileSize = stoll(tokens[4]);
+    string fullSHA = tokens[5];
+    string userId = tokens[6];
+    int clientPort = stoi(tokens[7]);
+    string clientIP = tokens[8];
+
     
     // Check if group exists
     if(groups.find(groupId) == groups.end()){
@@ -67,7 +82,7 @@ void handleUploadFileTracker(int newsockfd, vector<string>& tokens, string& clie
     }
     
     // Get file name from path
-    string fileName = filePath.substr(filePath.find_last_of("/\\") + 1);
+    // string fileName = filePath.substr(filePath.find_last_of("/\\") + 1);
     
     // Check if file already exists in group
     if(g->getFileInfo(fileName) != nullptr){
@@ -76,7 +91,7 @@ void handleUploadFileTracker(int newsockfd, vector<string>& tokens, string& clie
     }
     
     // Calculate file size
-    long long fileSize = stoi(tokens[4]);
+    // long long fileSize = stoi(tokens[4]);
     // if(fileSize == 0){
     //     writeToClient(newsockfd, filePath.c_str());
     //     writeToClient(newsockfd, "Invalid file or empty file");
@@ -87,9 +102,9 @@ void handleUploadFileTracker(int newsockfd, vector<string>& tokens, string& clie
     FileInfo* fileInfo = new FileInfo(fileName, filePath, fileSize, clientName, groupId);
     
     // Calculate SHA1 and pieces
-    fileInfo->fullFileSHA1 = tokens[5]; // iski zaroorat pad sakta maybe in the future
+    fileInfo->fullFileSHA1 = fullSHA; // iski zaroorat pad sakta maybe in the future
 
-    for(int i = 8; i < tokens.size(); i++){
+    for(int i = 9; i < tokens.size(); i++){
         string l = tokens[i];
         
         int pos = l.find(':');
@@ -101,7 +116,7 @@ void handleUploadFileTracker(int newsockfd, vector<string>& tokens, string& clie
         }
     }
 
-    fileInfo->addSeeder(stoi(tokens[6]),tokens[7]); // add seeder to the seeder list
+    fileInfo->addSeeder(userId, clientIP, clientPort); // add seeder to the seeder list
     // Add to group and global storage
     g->addSharedFile(fileName, fileInfo);
     allFiles[fileName] = fileInfo;
@@ -150,8 +165,12 @@ void handleUploadFileClient(int newsockfd, vector<string>& tokens, pair<string,i
     // Calculate SHA1 and pieces
     seedInfo->fullFileSHA = calculateFileSHA1(filePath); // iski zaroorat pad sakta maybe in the future
     seedInfo->pieces = calculateFilePieces(filePath);
-    
-    string message = "upload_file " + groupId + " " + fileName + " " + filePath + " " + to_string(fileSize) + " " + seedInfo->fullFileSHA + " " + to_string(clientInfo.second) + " " + clientInfo.first + " ";
+
+    string message = "upload_file " + groupId + " " + fileName + " " + filePath 
+                + " " + to_string(fileSize) + " " + seedInfo->fullFileSHA 
+                + " " + currentUserId 
+                + " " + to_string(clientInfo.second) 
+                + " " + clientInfo.first + " ";
     // attaching the piecewise hashes too - 
     for(auto sp : seedInfo->pieces){
         message += to_string(sp.pieceIndex);
@@ -263,15 +282,10 @@ void handleDownloadFile(int newsockfd, vector<string>& tokens, string& clientNam
 
     for(auto& piece : fileInfo->pieces){
         response += "|" + to_string(piece.pieceIndex) + ":" + piece.sha1Hash + ":";
-        // index:hash:ip:port;ip:port;ip:port
-        // Add seeder list for this specific piece
         for(int i = 0; i < piece.seeders.size(); i++){
-            response += piece.seeders[i].second + ":" + to_string(piece.seeders[i].first);
+            response += piece.seeders[i].userId + ":" + piece.seeders[i].ip + ":" + to_string(piece.seeders[i].port);
             if(i < piece.seeders.size() - 1)
                 response += ";";
-            // else{
-            //     response += "|";
-            // }
         }
     }
     
@@ -366,10 +380,11 @@ void handleStopShare(int newsockfd, vector<string>& tokens, string& clientName){
     int clientPort = stoi(tokens[4]);
     
     // Remove this specific seeder from ALL pieces
+    // Remove this specific seeder from ALL pieces
     bool wasSeeder = false;
     for(auto& piece : fileInfo->pieces) {
         for(auto it = piece.seeders.begin(); it != piece.seeders.end(); ) {
-            if(it->second == clientIP && it->first == clientPort) {
+            if(it->ip == clientIP && it->port == clientPort && it->userId == clientName) {
                 it = piece.seeders.erase(it);
                 wasSeeder = true;
             } else {
@@ -377,10 +392,10 @@ void handleStopShare(int newsockfd, vector<string>& tokens, string& clientName){
             }
         }
     }
-    
+
     // Remove from main seeder list
     for(auto it = fileInfo->seeders.begin(); it != fileInfo->seeders.end(); ) {
-        if(it->second == clientIP && it->first == clientPort) {
+        if(it->ip == clientIP && it->port == clientPort && it->userId == clientName) {
             it = fileInfo->seeders.erase(it);
             wasSeeder = true;
         } else {
@@ -409,7 +424,7 @@ void handleStopShare(int newsockfd, vector<string>& tokens, string& clientName){
              << " (" << fileInfo->seeders.size() << " seeders remaining)" << endl;
         
         // Sync seeder removal with other trackers
-        syncMessageHelper("REMOVE_SEEDER", groupId + " " + fileName + " " + clientIP + " " + to_string(clientPort));
+        syncMessageHelper("REMOVE_SEEDER", groupId + " " + fileName + " " + clientName + " " + clientIP + " " + to_string(clientPort));
     }
     
     writeToClient(newsockfd, "Stopped sharing file");

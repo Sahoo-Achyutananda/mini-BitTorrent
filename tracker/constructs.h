@@ -25,12 +25,24 @@ unordered_map<string, FileInfo*> allFiles; // fileName se FileInfo*
 //     }
 // };
 
+
+// Added this construct to handle the logout part - didnt read the doc correctly !
+struct SeederInfo {
+    string userId;
+    string ip;
+    int port;
+    
+    SeederInfo(string user, string ip, int port) 
+        : userId(user), ip(ip), port(port){}
+};
+
 class FilePiece{
 public :
     int pieceIndex;
     string sha1Hash;
     bool isAvailable;
-    vector<pair<int, string>> seeders; // seeders of a particular file piece - 
+    // vector<pair<int, string>> seeders; // seeders of a particular file piece - 
+    vector<SeederInfo> seeders;
     
     FilePiece(int index, string hash){
         this->pieceIndex = index;
@@ -48,10 +60,11 @@ public :
     vector<FilePiece> pieces;
     string uploaderId;
     string groupId;
-    vector<pair<int,string>> seeders; // list of people having the file
+    // vector<pair<int,string>> seeders; // list of people having the file
+    vector<SeederInfo> seeders;
     vector<pair<int,string>> downloaders; // list of people downloading . .. maybe not needed ! 
     
-    FileInfo(string name, string path, long long size, string uploader, string group) {
+    FileInfo(string name, string path, long long size, string uploader, string group){
         this->fileName = name;
         this->filePath = path;
         this->fileSize = size;
@@ -59,13 +72,35 @@ public :
         this->groupId = group;
     }
 
-    void addSeeder(int port, string ip){
-        this->seeders.push_back({port, ip});
-
+    void addSeeder(string userId, string ip, int port){
+        this->seeders.push_back(SeederInfo(userId, ip, port));
         for (auto &piece : pieces){
-            piece.seeders.push_back({port, ip});
+            piece.seeders.push_back(SeederInfo(userId, ip, port));
         }
     }
+
+    void removeSeederByUser(const string& userId){
+        // Remove from file-level seeders
+        vector<SeederInfo> newSeeders;
+        for (const auto& s : seeders){
+            if (s.userId != userId){
+                newSeeders.push_back(s);
+            }
+        }
+        seeders.swap(newSeeders); // wow - aisa bhi hota hai !
+
+        // Remove from all pieces
+        for (auto& piece : pieces){
+            vector<SeederInfo> newPieceSeeders;
+            for (const auto& s : piece.seeders){
+                if (s.userId != userId){
+                    newPieceSeeders.push_back(s);
+                }
+            }
+            piece.seeders.swap(newPieceSeeders);
+        }
+    }
+
 };
 
 class User{
@@ -166,34 +201,34 @@ public:
         return result;
     }
 
-    void addSharedFile(string fileName, FileInfo* fileInfo) {
+    void addSharedFile(string fileName, FileInfo* fileInfo){
         sharedFiles[fileName] = fileInfo;
     }
 
-    void removeSharedFile(string fileName) {
-        if(sharedFiles.find(fileName) != sharedFiles.end()) {
+    void removeSharedFile(string fileName){
+        if(sharedFiles.find(fileName) != sharedFiles.end()){
             sharedFiles.erase(fileName);
         }
     }
 
-    vector<string> getFileList() {
+    vector<string> getFileList(){
         vector<string> files;
-        for(auto& [fileName, fileInfo] : sharedFiles) {
+        for(auto& [fileName, fileInfo] : sharedFiles){
             files.push_back(fileName + " " + to_string(fileInfo->fileSize) + " " + fileInfo->uploaderId);
         }
         return files;
     }
 
     bool fileExists(string fileName){
-        if(sharedFiles.find(fileName) != sharedFiles.end()) {
+        if(sharedFiles.find(fileName) != sharedFiles.end()){
             return true;
         }
         return false;
     }
 
     // sometimes i used fileinfo - for some uploader info
-    FileInfo* getFileInfo(string fileName) {
-        if(sharedFiles.find(fileName) != sharedFiles.end()) {
+    FileInfo* getFileInfo(string fileName){
+        if(sharedFiles.find(fileName) != sharedFiles.end()){
             return sharedFiles[fileName];
         }
         return nullptr;
@@ -217,7 +252,7 @@ bool isLoggedIn(string userId){
 }
 
 // to trim extra spaces/tabs and stuff -
-string trim(string s) {
+string trim(string s){
     int start = s.find_first_not_of(" \n\r\t"); // find a valid start index
     int end = s.find_last_not_of(" \n\r\t"); // find the vlid end index
     return (start == string::npos) ? "" : s.substr(start, end - start + 1);

@@ -1,6 +1,7 @@
 #if !defined(CLIENT_CONSTRUCTS_H)
 #define CLIENT_CONSTRUCTS_H
 
+#include <queue>
 #include "./tracker/constructs.h"
 #include "./tracker/colors.h"
 #include "./tracker/synchronize.h" // sync message helper
@@ -26,11 +27,11 @@ bool trackerAlive = false;
 pthread_mutex_t tracker_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 struct PieceSeederInfo {
+    string userId;
     string ip;
     int port;
     bool isAlive;
-    
-    PieceSeederInfo(string ip, int port) : ip(ip), port(port), isAlive(true){}
+    PieceSeederInfo(string user, string ip, int port) : userId(user), ip(ip), port(port), isAlive(true) {}
 };
 
 class DownloadPieceInfo {
@@ -42,8 +43,8 @@ public:
     
     DownloadPieceInfo(int index, string hash) : pieceIndex(index), sha1Hash(hash), isDownloaded(false){}
     
-    void addSeeder(string ip, int port){
-        seeders.push_back(PieceSeederInfo(ip, port));
+    void addSeeder(string userId, string ip, int port){
+        seeders.push_back(PieceSeederInfo(userId, ip, port));
     }
 };
 
@@ -92,7 +93,6 @@ struct SeedInfo {
     }
 };
 
-#include <queue>
 
 void* downloadServer(void* arg);
 void* handlePeerRequest(void* arg);
@@ -105,23 +105,24 @@ void mergePiecesToFile(const string& fileName);
 void notifyTrackerPieceCompleted(const string& groupId, const string& fileName, int pieceIndex);
 
 void handlePieceCompleted(int newsockfd, vector<string>& tokens, string& clientName){
-    // piece_completed <group_id> <file_name> <piece_index> <client_ip> <client_port>
-    if(tokens.size() != 6){
-        writeToClient(newsockfd, "Usage: piece_completed <group_id> <file_name> <piece_index> <client_ip> <client_port>");
+    // piece_completed <group_id> <file_name> <piece_index> <user_id> <client_ip> <client_port>
+    if(tokens.size() != 7){
+        writeToClient(newsockfd, "Usage: piece_completed <group_id> <file_name> <piece_index> <user_id> <client_ip> <client_port>");
         return;
     }
+
+    string groupId = tokens[1];
+    string fileName = tokens[2];
+    int pieceIndex = stoi(tokens[3]);
+    string userId = tokens[4];
+    string clientIP = tokens[5];
+    int clientPort = stoi(tokens[6]);
     
     if(clientName.empty()){
         writeToClient(newsockfd, "No user is logged in!");
         return;
     }
-    
-    string groupId = tokens[1];
-    string fileName = tokens[2];
-    int pieceIndex = stoi(tokens[3]);
-    string clientIP = tokens[4];
-    int clientPort = stoi(tokens[5]);
-    
+
     // Check if group and file exist
     if(groups.find(groupId) == groups.end()){
         writeToClient(newsockfd, "Group doesn't exist");
@@ -140,27 +141,23 @@ void handlePieceCompleted(int newsockfd, vector<string>& tokens, string& clientN
         // Check if this seeder is already in the list for this piece
         bool alreadySeeder = false;
         for(const auto& seeder : fileInfo->pieces[pieceIndex].seeders){
-            if(seeder.second == clientIP && seeder.first == clientPort){
+            if(seeder.ip == clientIP && seeder.port == clientPort && seeder.userId == userId) {
                 alreadySeeder = true;
                 break;
             }
         }
         
         if(!alreadySeeder){
-            fileInfo->pieces[pieceIndex].seeders.push_back({clientPort, clientIP});
+            fileInfo->pieces[pieceIndex].seeders.push_back(SeederInfo(userId, clientIP, clientPort));
             fileInfo->pieces[pieceIndex].isAvailable = true;
             
             // Sync this update with other trackers
-            string syncData = groupId + " " + fileName + " " + to_string(pieceIndex) + " " + clientIP + " " + to_string(clientPort) + " " + clientName;
+            string syncData = groupId + " " + fileName + " " + to_string(pieceIndex) + " " + userId + " " + clientIP + " " + to_string(clientPort);
             syncMessageHelper("PIECE_COMPLETED", syncData);
             
-            cout << "Added " << clientName << " as seeder for piece " << pieceIndex << " of " << fileName << endl;
+            cout << "Added " << userId << " as seeder for piece " << pieceIndex << " of " << fileName << endl;
             writeToClient(newsockfd, "Piece seeder info updated successfully");
-        } else {
-            writeToClient(newsockfd, "Already registered as seeder for this piece");
         }
-    } else {
-        writeToClient(newsockfd, "Invalid piece index");
     }
 }
 

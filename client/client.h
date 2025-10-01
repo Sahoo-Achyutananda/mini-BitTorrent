@@ -16,6 +16,40 @@ bool loggedIn = false;
 // now the client has to accepts it's DSs -> the downloads one 
 // void showActiveDownloads();
 
+// this line was added to fix a bug - circular dependency
+void handleUploadFileClient(int newsockfd, vector<string>& tokens, pair<string,int> clientInfo);
+
+void handleLogoutClient(int sockfd, string& userId) {
+    if(userId.empty() || !loggedIn) {
+        cout << colorRed << "Not logged in!" << reset << endl;
+        return;
+    }
+    
+    // Send logout command to tracker
+    string command = "logout\n";
+    
+    pthread_mutex_lock(&tracker_mutex);
+    if(trackerAlive && sockfd != -1) {
+        write(sockfd, command.c_str(), command.length());
+    }
+    pthread_mutex_unlock(&tracker_mutex);
+    
+    // Clear local state
+    pthread_mutex_lock(&seed_mutex);
+    seedingFiles.clear(); // Stop all seeding
+    pthread_mutex_unlock(&seed_mutex);
+    
+    pthread_mutex_lock(&download_mutex);
+    activeDownloads.clear(); // Clear downloads
+    pthread_mutex_unlock(&download_mutex);
+    
+    currentUserId.clear();
+    currentPassword.clear();
+    loggedIn = false;
+    
+    cout << fontBold << colorGreen << "Logged out successfully" << reset << endl;
+}
+
 
 // modified this thing to show more details for debugginghgggggggggggggggggggggggg
 // modified the formatting using GPT
@@ -140,6 +174,10 @@ bool handleClientCommand(string input, int sockfd, pair<string,int> clientInfo){
     }
     if(tokens[0] == "show_downloads"){
         showActiveDownloads();
+        return true;
+    }
+    if(tokens[0] == "logout") {
+        handleLogoutClient(sockfd, currentUserId);
         return true;
     }
     if(tokens[0] == "stop_share"){
