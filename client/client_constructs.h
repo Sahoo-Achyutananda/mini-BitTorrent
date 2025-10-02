@@ -26,7 +26,8 @@ int sockfd = -1;
 bool trackerAlive = false;
 pthread_mutex_t tracker_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-struct PieceSeederInfo {
+class PieceSeederInfo {
+public :
     string userId;
     string ip;
     int port;
@@ -67,7 +68,8 @@ public :
 };
 
 
-struct SeedPiece {
+class SeedPiece {
+public :
     int pieceIndex;
     string sha1Hash;
     
@@ -77,7 +79,8 @@ struct SeedPiece {
     }
 };
 
-struct SeedInfo {
+class SeedInfo {
+public :
     string fileName;
     string filePath;
     string groupId;
@@ -155,8 +158,8 @@ void handlePieceCompleted(int newsockfd, vector<string>& tokens, string& clientN
             string syncData = groupId + " " + fileName + " " + to_string(pieceIndex) + " " + userId + " " + clientIP + " " + to_string(clientPort);
             syncMessageHelper("PIECE_COMPLETED", syncData);
             
-            cout << "Added " << userId << " as seeder for piece " << pieceIndex << " of " << fileName << endl;
-            writeToClient(newsockfd, "Piece seeder info updated successfully");
+            // cout << "Added " << userId << " as seeder for piece " << pieceIndex << " of " << fileName << endl;
+            // writeToClient(newsockfd, "Piece seeder info updated successfully");
         }
     }
 }

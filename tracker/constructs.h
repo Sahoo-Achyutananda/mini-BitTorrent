@@ -233,8 +233,38 @@ public:
         }
         return nullptr;
     }
+
+    bool transferOwnership(string newOwnerId){
+        if(groupUsers.find(newOwnerId) == groupUsers.end()){
+            return false; // New owner must be a member
+        }
+        
+        if(!ownerId.empty()){
+            groupOwners.erase(ownerId);
+        }
+        
+        ownerId = newOwnerId;
+        groupOwners[newOwnerId] = this;
+        
+        return true;
+    }
+    
+    string getNextEligibleOwner(){
+        for(auto &[userId, user] : groupUsers){
+            if(userId != ownerId){
+                return userId;
+            }
+        }
+        return "";
+    }
+    
+    // checks for a particular group if its an owner or not -> the group info is needed
+    bool isOwner(string userId){
+        return ownerId == userId;
+    }
 };
 
+//checks if it is part of the owner list - group info is not needed !
 bool isGroupOwner(string userId){
     return groupOwners.find(userId) != groupOwners.end();
 }

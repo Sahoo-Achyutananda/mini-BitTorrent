@@ -122,9 +122,13 @@ void handleUploadFileTracker(int newsockfd, vector<string>& tokens, string& clie
     allFiles[fileName] = fileInfo;
     
     // Sync with other trackers
-    string syncData = groupId + " " + fileName + " " + filePath + " " + to_string(fileSize) + " " + clientName + " " + fileInfo->fullFileSHA1 + " " + tokens[6] + " " + tokens[7];
+    string syncData = groupId + " " + fileName + " " + filePath + " " + to_string(fileSize) + " " + clientName + " " + fileInfo->fullFileSHA1 + " " + tokens[6] + " " + tokens[7] + " " + tokens[8];
+    // compeltely forgot this - 
+    for(int i = 9; i < tokens.size(); i++){
+        syncData += " " + tokens[i];
+    }
     syncMessageHelper("UPLOAD_FILE", syncData);
-    
+    // cout << fontBold << colorBlue << "[SYNC OUT] UPLOAD_FILE: " << syncData << reset << endl; // debug
     cout << "File uploaded: " << fileName << " by " << clientName << " in group " << groupId << endl;
     writeToClient(newsockfd, "File uploaded successfully");
 }
@@ -276,9 +280,7 @@ void handleDownloadFile(int newsockfd, vector<string>& tokens, string& clientNam
     // Send file metadata to client for download -> i have to include the code for seeders and leechers - -> then share the seeder info !
     // there was an update where whenever a piece is completely available after download, the 
     // string response = "FILE_META|" + fileName + "|" + to_string(fileInfo->fileSize) + "|" + fileInfo->fullFileSHA1 + "|" + to_string(fileInfo->pieces.size());
-    string response = "FILE_META|" + fileName + "|" + to_string(fileInfo->fileSize) + 
-                 "|" + fileInfo->fullFileSHA1 + "|" + to_string(fileInfo->pieces.size()) +
-                 "|" + groupId + "|" + destPath;
+    string response = "FILE_META|" + fileName + "|" + to_string(fileInfo->fileSize) + "|" + fileInfo->fullFileSHA1 + "|" + to_string(fileInfo->pieces.size()) +"|" + groupId + "|" + destPath;
 
     for(auto& piece : fileInfo->pieces){
         response += "|" + to_string(piece.pieceIndex) + ":" + piece.sha1Hash + ":";
@@ -380,7 +382,6 @@ void handleStopShare(int newsockfd, vector<string>& tokens, string& clientName){
     int clientPort = stoi(tokens[4]);
     
     // Remove this specific seeder from ALL pieces
-    // Remove this specific seeder from ALL pieces
     bool wasSeeder = false;
     for(auto& piece : fileInfo->pieces) {
         for(auto it = piece.seeders.begin(); it != piece.seeders.end(); ) {
@@ -420,8 +421,7 @@ void handleStopShare(int newsockfd, vector<string>& tokens, string& clientName){
         // Sync removal with other trackers
         syncMessageHelper("REMOVE_FILE", groupId + " " + fileName);
     } else {
-        cout << clientName << " stopped seeding " << fileName 
-             << " (" << fileInfo->seeders.size() << " seeders remaining)" << endl;
+        cout << clientName << " stopped seeding " << fileName << " (" << fileInfo->seeders.size() << " seeders remaining)" << endl;
         
         // Sync seeder removal with other trackers
         syncMessageHelper("REMOVE_SEEDER", groupId + " " + fileName + " " + clientName + " " + clientIP + " " + to_string(clientPort));
@@ -430,5 +430,97 @@ void handleStopShare(int newsockfd, vector<string>& tokens, string& clientName){
     writeToClient(newsockfd, "Stopped sharing file");
 }
 
+
+void handleLeaveGroup(int newsockfd, string clientName, vector<string> &tokens){
+    if(clientName.empty()){
+        writeToClient(newsockfd, "No user is logged in!");
+    } else {
+        pthread_mutex_lock(&dsLock);
+        string groupId = tokens[1];
+        if(groups.find(groupId) == groups.end()){
+            pthread_mutex_unlock(&dsLock);
+            writeToClient(newsockfd, "Group doesn't exist");
+        } else {
+            Group* g = groups[groupId];
+            
+            // Check if user is the owner
+            bool wasOwner = g->isOwner(clientName);
+            string newOwnerId = "";
+            
+            if(wasOwner){
+                // Get next eligible member before removing current owner
+                newOwnerId = g->getNextEligibleOwner();
+            }
+
+            // Remove user as seeder from all files in this group
+            vector<string> filesToRemove;
+            for(auto &[fileName, fileInfo] : allFiles){
+                if(fileInfo->groupId == groupId){
+                    fileInfo->removeSeederByUser(clientName);
+                    
+                    if(fileInfo->seeders.empty()){
+                        filesToRemove.push_back(fileName);
+                    }
+                }
+            }
+            
+            // Clean up files with no seeders
+            for(string &fileName : filesToRemove){
+                g->removeSharedFile(fileName);
+                delete allFiles[fileName];
+                allFiles.erase(fileName);
+                
+                cout << fontBold << colorYellow << "File " << fileName << " removed (no seeders left)" << reset << endl;
+                
+                // Sync file removal
+                syncMessageHelper("REMOVE_FILE", groupId + " " + fileName);
+            }
+            
+            // Remove user from group
+            g->removeUser(clientName);
+            
+            // Handle ownership transfer
+            if(wasOwner){
+                if(!newOwnerId.empty()){
+                    // Transfer ownership
+                    g->transferOwnership(newOwnerId);
+                    cout << fontBold << colorYellow << "Ownership of group " << groupId << " transferred from " << clientName << " to " << newOwnerId << reset << endl;
+                    
+                    // Sync ownership change
+                    syncMessageHelper("LEAVE_GROUP", groupId + " " + clientName);
+                    syncMessageHelper("TRANSFER_OWNERSHIP", groupId + " " + clientName + " " + newOwnerId);
+                    
+                    writeToClient(newsockfd, "Left group. Ownership transferred to " + newOwnerId);
+                }else{
+                    // No other members - delete group
+                    cout << fontBold << colorRed << "Group " << groupId << " deleted (owner left, no members)" << reset << endl;
+                    
+                    // Clean up files
+                    for(auto& [fileName, fileInfo] : allFiles){
+                        if(fileInfo->groupId == groupId){
+                            delete fileInfo;
+                        }
+                    }
+                    
+                    delete g;
+                    groups.erase(groupId);
+                    
+                    // Sync group deletion
+                    syncMessageHelper("DELETE_GROUP", groupId);
+                    
+                    writeToClient(newsockfd, "Group deleted (you were the only member)");
+                }
+            }else{
+                // Regular member leaving
+                syncMessageHelper("LEAVE_GROUP", groupId + " " + clientName); // synchronize.h file ko check karo on how this message passing is implemented !
+                writeToClient(newsockfd, "Successfully left group");
+            }
+            
+            pthread_mutex_unlock(&dsLock);
+            
+            cout << fontBold << colorGreen << clientName << " left group " << groupId << reset << endl;
+        }
+    }
+}
 
 #endif // FILEOPS_H

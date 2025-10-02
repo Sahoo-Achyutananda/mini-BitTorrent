@@ -364,15 +364,16 @@ void *handleConnections(void *arg){
                     // cerr << fontBold << colorRed << "No user is logged-in" << reset << endl;
                     writeToClient( newsockfd, "No user is logged in !");
                 }else{
+                    handleLeaveGroup(newsockfd, clientName, tokens);
                     // fetch the logged in user data -
-                    User *u = users[clientName];
-                    // get group -
-                    Group *g = groups[tokens[1]];
+                    // User *u = users[clientName];
+                    // // get group -
+                    // Group *g = groups[tokens[1]];
 
-                    g->removeUser(u->getUserId());
-                    syncMessageHelper("LEAVE_GROUP", tokens[1] + " " + clientName);
-                    cout << fontBold << colorGreen << clientName << "successfully Removed from group" << tokens[1] << reset << endl;
-                    writeToClient(newsockfd, "Successfully Removed from Group !");
+                    // g->removeUser(u->getUserId());
+                    // syncMessageHelper("LEAVE_GROUP", tokens[1] + " " + clientName);
+                    // cout << fontBold << colorGreen << clientName << "successfully Removed from group" << tokens[1] << reset << endl;
+                    // writeToClient(newsockfd, "Successfully Removed from Group !");
                 }
             }
         }else if(tokens[0] == "list_groups"){

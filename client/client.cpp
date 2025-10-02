@@ -42,13 +42,14 @@ pair<string,int> clientInfo;
 
 // to solve the tracker bug - 
 bool autoRelogin() {
+    sleep(1);
     if(!loggedIn || currentUserId.empty()) {
         return false;
     }
     
     cout << fontBold << colorYellow << "Auto-relogin as " << currentUserId << "..." << reset << endl;
     
-    string command = "login " + currentUserId + " " + currentPassword;
+    string command = "login " + currentUserId + " " + currentPassword + "\n";
     
     pthread_mutex_lock(&tracker_mutex);
     if(!trackerAlive || sockfd == -1) {
@@ -165,6 +166,7 @@ int main(int argc, char *argv[]){
         pthread_mutex_unlock(&tracker_mutex);
 
         if(loggedIn && !currentUserId.empty()) {
+            cout << "debug : " << loggedIn << " "<< currentUserId << endl;
             sleep(1);
             if(autoRelogin()) {
                 cout << fontBold << colorGreen << "Auto-relogin successful!" << reset << endl;

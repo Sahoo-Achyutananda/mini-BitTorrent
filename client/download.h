@@ -10,6 +10,7 @@
 #include "sha.h"
 #include "fileops.h"
 #include "client.h"
+#include "threadpool.h"
 
 extern pair<string, int> clientInfo;
 
@@ -24,38 +25,30 @@ void mergePiecesToFile(string& fileName);
 void notifyTrackerPieceCompleted(string& groupId, string& fileName, int pieceIndex);
 void notifyTrackerDownloadComplete(string& groupId, string& fileName);
 
-// Initialize download server - without pool
+// Initialize download server with thread pool
 void initializeDownloadServer(int basePort){
     if(downloadServerRunning) return;
     
-    downloadServerPort = basePort + 2000; // Download port offset
+    downloadServerPort = basePort + 2000;
     downloadServerRunning = true;
+    
+    // Initialize thread pool for parallel downloads
+    initializeThreadPool();
     
     pthread_create(&downloadServerThread, nullptr, downloadServer, nullptr);
     pthread_detach(downloadServerThread);
     
-    cout << fontBold << colorGreen << "Download server started on port " << downloadServerPort << reset << endl;
+    cout << fontBold << colorGreen << "Download server started on port " 
+         << downloadServerPort << reset << endl;
 }
 
-// with thread pool -
-// void initializeDownloadServer(int basePort) {
-//     if(downloadServerRunning) return;
-    
-//     downloadServerPort = basePort + 2000;
-//     downloadServerRunning = true;
-    
-//     // Initialize thread pool with 10 worker threads
-//     downloadPool = new DownloadThreadPool(10);
-//     downloadPool->start();
-    
-//     pthread_create(&downloadServerThread, nullptr, downloadServer, nullptr);
-//     pthread_detach(downloadServerThread);
-    
-//     cout << fontBold << colorGreen << "Download server started on port " 
-//          << downloadServerPort << reset << endl;
-// }
+// Thread pool task execution (defined here to avoid circular dependency)
+void ThreadPool::executeTask(DownloadTask* task) {
+    downloadPieceFromPeer(task->fileName, task->pieceIndex, 
+                          task->expectedHash, task->seeder);
+}
 
-// Download server implementation
+// Download server implementation (unchanged)
 void* downloadServer(void* arg){
     int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
     if(serverSocket < 0){
@@ -83,7 +76,8 @@ void* downloadServer(void* arg){
         return nullptr;
     }
     
-    cout << fontBold << colorBlue << "Download server listening on port " << downloadServerPort << reset << endl;
+    cout << fontBold << colorBlue << "Download server listening on port " 
+         << downloadServerPort << reset << endl;
     
     while(downloadServerRunning){
         sockaddr_in clientAddr;
@@ -105,6 +99,7 @@ void* downloadServer(void* arg){
     return nullptr;
 }
 
+// handlePeerRequest and servePieceToClient remain the same
 void* handlePeerRequest(void* arg){
     int clientSocket = *(int*)arg;
     delete (int*)arg;
@@ -119,9 +114,6 @@ void* handlePeerRequest(void* arg){
     buffer[n] = '\0';
     string request(buffer);
     
-    // cout << request << endl ; // debug
-
-    // Parse request: "GET_PIECE|fileName|pieceIndex"
     vector<string> tokens;
     stringstream ss(request);
     string token;
@@ -139,9 +131,7 @@ void* handlePeerRequest(void* arg){
     string fileName = tokens[1];
     int pieceIndex = stoi(tokens[2]);
     
-    if(servePieceToClient(clientSocket, fileName, pieceIndex)){
-        // cout << fontBold << colorBlue << "Served piece " << pieceIndex << " of " << fileName << reset << endl;
-    }
+    servePieceToClient(clientSocket, fileName, pieceIndex);
     
     close(clientSocket);
     return nullptr;
@@ -166,7 +156,6 @@ bool servePieceToClient(int clientSocket, string fileName, int pieceIndex){
         return false;
     }
     
-    // Read piece from file
     ifstream file(seedInfo->filePath, ios::binary);
     if(!file.is_open()){
         pthread_mutex_unlock(&seed_mutex);
@@ -185,15 +174,14 @@ bool servePieceToClient(int clientSocket, string fileName, int pieceIndex){
     
     pthread_mutex_unlock(&seed_mutex);
     
-    // Send response header and data
     string response = "PIECE_DATA|" + to_string(bytesRead) + "|\n";
-    // write(clientSocket, response.c_str(), response.length());
-    // write(clientSocket, pieceData, bytesRead);
     if(writeAll(clientSocket, response.c_str(), response.size()) < 0){
-        cout << colorRed << fontBold  << "Something went wron - download.h - serverPIeceToCLient - line 173" << endl;
+        delete[] pieceData;
+        return false;
     }
-    if (writeAll(clientSocket, pieceData, bytesRead) < 0){
-        cout << colorRed << fontBold  << "Something went wron - download.h - serverPIeceToCLient - line 176" << endl;
+    if(writeAll(clientSocket, pieceData, bytesRead) < 0){
+        delete[] pieceData;
+        return false;
     }
     
     delete[] pieceData;
@@ -201,7 +189,6 @@ bool servePieceToClient(int clientSocket, string fileName, int pieceIndex){
 }
 
 void handleFileMetadata(string response){
-    // Format: FILE_META|fileName|fileSize|fullFileSHA1|totalPieces|groupId|destPath|piece0:hash:ip1:port1;ip2:port2|piece1:hash:ip1:port1;ip2:port2|...
     vector<string> parts;
     stringstream ss(response);
     string item;
@@ -233,11 +220,9 @@ void handleFileMetadata(string response){
     download->destPath = destPath;
     download->downloadedPieces.resize(totalPieces, false);
     
-    // Parse piece information with seeder details
     for(int i = 7; i < parts.size(); i++){
         string pieceInfo = parts[i];
         
-        // Parse: "pieceIndex:hash:ip1:port1;ip2:port2"
         size_t firstColon = pieceInfo.find(':');
         size_t secondColon = pieceInfo.find(':', firstColon + 1);
         
@@ -249,12 +234,10 @@ void handleFileMetadata(string response){
         
         DownloadPieceInfo piece(pieceIndex, pieceHash);
         
-        // Parse seeder list: "userId1:ip1:port1;userId2:ip2:port2"
         if(!seedersStr.empty()){
             stringstream seederStream(seedersStr);
             string seederInfo;
             while(getline(seederStream, seederInfo, ';')){
-                // Split by colons: userId:ip:port
                 size_t firstColon = seederInfo.find(':');
                 size_t secondColon = seederInfo.find(':', firstColon + 1);
                 
@@ -275,13 +258,14 @@ void handleFileMetadata(string response){
     
     cout << fontBold << colorBlue << "Started download: " << fileName << " (" << fileSize << " bytes, " << totalPieces << " pieces)" << reset << endl;
     
-    // Start download worker thread
+    // Start download coordinator thread
     pthread_t workerThread;
     pthread_create(&workerThread, nullptr, downloadWorker, new string(fileName));
     pthread_detach(workerThread);
 }
 
-// Download worker implementation -runs on the client that requested the file - without thread pool version !
+// this was the only fucntion updated to handle threead_pool
+// PARALLEL DOWNLOAD WORKER - submits tasks to thread pool
 void* downloadWorker(void* arg){
     string fileName = *(string*)arg;
     delete (string*)arg;
@@ -294,150 +278,104 @@ void* downloadWorker(void* arg){
     }
     
     DownloadInfo* download = it->second;
+    int totalPieces = download->totalPieces;
     pthread_mutex_unlock(&download_mutex);
     
-    cout << fontBold << colorYellow << "Starting download worker for " << fileName << reset << endl;
+    cout << fontBold << colorYellow << "Starting PARALLEL download for " << fileName << " using thread pool" << reset << endl;
     
-    // Download all pieces
-    for(auto piece : download->pieces){
-        // cout << colorYellow << piece.pieceIndex << " " << piece.sha1Hash << reset << endl ; // debug
-        // for(auto seeder : piece.seeders){
-        //     cout << seeder.ip << " " << seeder.port << endl;
-        // }
+    // Submit ALL pieces to thread pool for parallel download
+    for(auto& piece : download->pieces){
         if(download->downloadedPieces[piece.pieceIndex]) continue;
         
-        bool pieceDownloaded = false;
-        for(auto seeder : piece.seeders){
-            // cout << colorBlue << seeder.ip << " " << seeder.isAlive << " " << seeder.port << " " << reset << endl;
-            if(downloadPieceFromPeer(fileName, piece.pieceIndex, piece.sha1Hash, seeder)){
-                pthread_mutex_lock(&download_mutex);
-                download->downloadedPieces[piece.pieceIndex] = true;
-                pthread_mutex_unlock(&download_mutex);
-                
-                notifyTrackerPieceCompleted(download->groupId, fileName, piece.pieceIndex);
-                pieceDownloaded = true;
-                break;
-            }
-        }
-        
-        if(!pieceDownloaded){
-            cout << fontBold << colorRed << "Failed to download piece " << piece.pieceIndex << " of " << fileName << reset << endl;
+        // Submit task for each seeder (thread pool will handle them in parallel) -only tries first seeder - im breaking out after the first seeder try
+        for(auto& seeder : piece.seeders){
+            DownloadTask* task = new DownloadTask(
+                fileName,
+                piece.pieceIndex,
+                piece.sha1Hash,
+                seeder
+            );
+            globalDownloadPool->addTask(task);
+            break; // Try first seeder, retry logic below
         }
     }
     
-    // Check if all pieces downloaded
-    bool allDownloaded = true;
-    for(bool downloaded : download->downloadedPieces){
-        if(!downloaded){
-            allDownloaded = false;
+    // Monitor progress
+    // int lastReported = 0;
+    while(true){ // try ->retry ->try ->retry and die
+        sleep(2);
+        
+        pthread_mutex_lock(&download_mutex);
+        int completed = 0;
+        for(bool downloaded : download->downloadedPieces){
+            if(downloaded) completed++;
+        }
+        pthread_mutex_unlock(&download_mutex);
+        
+        // // Show progress every 10%
+        // int progressPercent = (completed * 100) / totalPieces;
+        // if(progressPercent >= lastReported + 10){
+        //     cout << fontBold << colorBlue << fileName << ": " 
+        //          << progressPercent << "% complete (" << completed 
+        //          << "/" << totalPieces << " pieces)" << reset << endl;
+        //     lastReported = progressPercent;
+        // }
+        
+        // Check if all pieces downloaded
+        if(completed == totalPieces){
+            mergePiecesToFile(fileName);
+            download->isComplete = true;
+            cout << fontBold << colorGreen << "Download completed: " << fileName << reset << endl;
             break;
         }
-    }
-    
-    if(allDownloaded){
-        mergePiecesToFile(fileName);
-        download->isComplete = true;
-        cout << fontBold << colorGreen << "Download completed: " << fileName << reset << endl;
+        
+        // Retry failed pieces 
+        if(globalDownloadPool->isIdle()){
+            bool hasFailedPieces = false;
+            for(auto& piece : download->pieces){
+                if(!download->downloadedPieces[piece.pieceIndex]){
+                    hasFailedPieces = true;
+                    // Retry with next seeder
+                    for(auto& seeder : piece.seeders){
+                        DownloadTask* task = new DownloadTask(
+                            fileName, piece.pieceIndex,
+                            piece.sha1Hash, seeder
+                        );
+                        globalDownloadPool->addTask(task);
+                        break;
+                    }
+                }
+            }
+            
+            if(!hasFailedPieces) break; // All done
+        }
     }
     
     return nullptr;
 }
 
-// void* downloadWorker(void* arg) {
-//     string fileName = *(string*)arg;
-//     delete (string*)arg;
-    
-//     pthread_mutex_lock(&download_mutex);
-//     auto it = activeDownloads.find(fileName);
-//     if(it == activeDownloads.end()) {
-//         pthread_mutex_unlock(&download_mutex);
-//         return nullptr;
-//     }
-    
-//     DownloadInfo* download = it->second;
-//     pthread_mutex_unlock(&download_mutex);
-    
-//     cout << fontBold << colorYellow << "Starting download worker for " 
-//          << fileName << reset << endl;
-    
-//     // Submit all pieces to thread pool
-//     for(auto& piece : download->pieces) {
-//         if(download->downloadedPieces[piece.pieceIndex]) continue;
-        
-//         // Try each seeder for this piece
-//         for(auto& seeder : piece.seeders) {
-//             DownloadTask* task = new DownloadTask(
-//                 fileName,
-//                 piece.pieceIndex,
-//                 piece.sha1Hash,
-//                 seeder
-//             );
-//             downloadPool->addTask(task);
-//             break; // Only schedule from first seeder initially
-//         }
-//     }
-    
-//     // Monitor completion
-//     while(true) {
-//         sleep(2);
-        
-//         pthread_mutex_lock(&download_mutex);
-//         bool allDownloaded = true;
-//         int completed = 0;
-        
-//         for(bool downloaded : download->downloadedPieces) {
-//             if(downloaded) completed++;
-//             else allDownloaded = false;
-//         }
-//         pthread_mutex_unlock(&download_mutex);
-        
-//         // Show progress
-//         if(completed % 100 == 0) {
-//             cout << fontBold << colorBlue << fileName << ": " << completed 
-//                  << "/" << download->totalPieces << " pieces" << reset << endl;
-//         }
-        
-//         if(allDownloaded) {
-//             mergePiecesToFile(fileName);
-//             download->isComplete = true;
-//             cout << fontBold << colorGreen << "Download completed: " 
-//                  << fileName << reset << endl;
-//             break;
-//         }
-        
-//         // Check if thread pool is idle (all tasks done but pieces missing)
-//         if(downloadPool->pendingTasks() == 0) {
-//             // Retry failed pieces
-//             for(auto& piece : download->pieces) {
-//                 if(!download->downloadedPieces[piece.pieceIndex]) {
-//                     for(auto& seeder : piece.seeders) {
-//                         DownloadTask* task = new DownloadTask(
-//                             fileName, piece.pieceIndex, 
-//                             piece.sha1Hash, seeder
-//                         );
-//                         downloadPool->addTask(task);
-//                         break;
-//                     }
-//                 }
-//             }
-//         }
-//     }
-    
-//     return nullptr;
-// }
-
 bool downloadPieceFromPeer(string& fileName, int pieceIndex, string& expectedHash, PieceSeederInfo& peer){
+    // Check if already downloaded (race condition protection)
+    pthread_mutex_lock(&download_mutex);
+    auto it = activeDownloads.find(fileName);
+    if(it == activeDownloads.end()){
+        pthread_mutex_unlock(&download_mutex);
+        return false;
+    }
+    if(it->second->downloadedPieces[pieceIndex]){
+        pthread_mutex_unlock(&download_mutex);
+        return true; // Already downloaded by another thread
+    }
+    pthread_mutex_unlock(&download_mutex);
+    
     int peerSocket = socket(AF_INET, SOCK_STREAM, 0);
     if(peerSocket < 0) return false;
     
     sockaddr_in peerAddr{};
     peerAddr.sin_family = AF_INET;
-    peerAddr.sin_port = htons(peer.port + 2000); // Download server port -> each client will have this
-    // cout << "debug : connected to" << peer.port + 2000 << endl; // debug
-
+    peerAddr.sin_port = htons(peer.port + 2000);
     inet_pton(AF_INET, peer.ip.c_str(), &peerAddr.sin_addr);
     
-    // Set timeout
     timeval timeout;
     timeout.tv_sec = 10;
     timeout.tv_usec = 0;
@@ -449,94 +387,95 @@ bool downloadPieceFromPeer(string& fileName, int pieceIndex, string& expectedHas
         return false;
     }
     
-    // Send piece request
     string request = "GET_PIECE|" + fileName + "|" + to_string(pieceIndex);
-    cout << colorRed << request << reset << endl;
-
     if(writeAll(peerSocket, request.c_str(), request.size()) <= 0){
         close(peerSocket);
         return false;
     }
-        
-    // Read response header
-
+    
     string headerLine;
-    if (!readLineFromSocket(peerSocket, headerLine)){
+    if(!readLineFromSocket(peerSocket, headerLine)){
         close(peerSocket);
         return false;
     }
-
-    // headerLine should be like: PIECE_DATA|<size>|
-    if (headerLine.rfind("PIECE_DATA|", 0) != 0){
-        // cout << colorGreen << headerLine << reset << endl;  // debug
+    
+    if(headerLine.rfind("PIECE_DATA|", 0) != 0){
         close(peerSocket);
         return false;
     }
-    size_t p1 = headerLine.find('|', 10); // after "PIECE_DATA"
-    if (p1 == string::npos){
+    
+    size_t p1 = headerLine.find('|', 10);
+    if(p1 == string::npos){
         close(peerSocket);
         return false;
     }
     size_t p2 = headerLine.find('|', p1 + 1);
-    if (p2 == string::npos){
+    if(p2 == string::npos){
         close(peerSocket);
         return false;
     }
+    
     int dataSize = stoi(headerLine.substr(p1 + 1, p2 - p1 - 1));
-    if (dataSize < 0){ close(peerSocket); return false; }
-
-    // Allocate buffer and read exactly dataSize bytes
+    if(dataSize < 0){ 
+        close(peerSocket); 
+        return false; 
+    }
+    
     char* pieceData = new char[dataSize];
-
     int totalRead = 0;
     while(totalRead < dataSize){
         long long n = read(peerSocket, pieceData + totalRead, dataSize - totalRead);
         if(n < 0){
-            perror("read failed");
             delete[] pieceData;
             close(peerSocket);
             return false;
         } else if(n == 0){
-            // Connection closed but we haven't read full piece
-            usleep(1000); // wait a tiny bit and retry
+            usleep(1000);
             continue;
         }
         totalRead += n;
     }
     
-    // Verify hash
     string pieceHash = calculateSHA1(string(pieceData, dataSize));
     if(pieceHash != expectedHash){
-        cout << fontBold << colorRed << "Hash mismatch for piece " << pieceIndex << " of " << fileName << reset << endl;
-        // debug - 
-        // cout << pieceHash << " " << expectedHash << endl;
+        cout << fontBold << colorRed << "Hash mismatch for piece " 
+             << pieceIndex << " of " << fileName << reset << endl;
         delete[] pieceData;
+        close(peerSocket);
         return false;
     }
     
-    // Save piece to temporary file
     pthread_mutex_lock(&download_mutex);
     string destPath = activeDownloads[fileName]->destPath;
     pthread_mutex_unlock(&download_mutex);
-
-    cout << colorRed << destPath << reset << endl;
-
+    
     string tempFileName = destPath + ".part" + to_string(pieceIndex);
     ofstream tempFile(tempFileName, ios::binary);
     if(!tempFile.is_open()){
         delete[] pieceData;
+        close(peerSocket);
         return false;
     }
     
     tempFile.write(pieceData, dataSize);
     tempFile.close();
     delete[] pieceData;
-    close(peerSocket); // forgot htis line - got max open files error
-    cout << fontBold << colorGreen << "Downloaded piece " << pieceIndex << " of " << fileName << " from " << peer.ip << ":" << peer.port << reset << endl;
+    close(peerSocket);
+    
+    // Mark as downloaded and notify tracker
+    pthread_mutex_lock(&download_mutex);
+    activeDownloads[fileName]->downloadedPieces[pieceIndex] = true;
+    string groupId = activeDownloads[fileName]->groupId;
+    pthread_mutex_unlock(&download_mutex);
+    
+    notifyTrackerPieceCompleted(groupId, fileName, pieceIndex);
+    
+    // cout << fontBold << colorGreen << "[Thread " << pthread_self() << "] "<< "Downloaded piece " << pieceIndex << " of " << fileName << " from " << peer.ip << ":" << peer.port << reset << endl;
     
     return true;
 }
 
+// mergePiecesToFile and notify functions remain the same
 void mergePiecesToFile(string& fileName){
     pthread_mutex_lock(&download_mutex);
     auto it = activeDownloads.find(fileName);
@@ -572,12 +511,11 @@ void mergePiecesToFile(string& fileName){
         finalFile.write(buffer, bytesRead);
         
         tempFile.close();
-        unlink(tempFileName.c_str()); // Delete temporary file
+        unlink(tempFileName.c_str());
     }
     
     finalFile.close();
     
-    // Add to seeding files
     pthread_mutex_lock(&seed_mutex);
     SeedInfo* seedInfo = new SeedInfo(fileName, destPath, download->groupId, download->fileSize);
     seedInfo->fullFileSHA = download->fullFileSHA1;
@@ -585,13 +523,11 @@ void mergePiecesToFile(string& fileName){
     seedingFiles[fileName] = seedInfo;
     pthread_mutex_unlock(&seed_mutex);
     
-    cout << fontBold << colorGreen << fileName << "File merged successfully: " << destPath << reset << endl;
+    cout << fontBold << colorGreen << "File merged successfully: " << destPath << reset << endl;
     notifyTrackerDownloadComplete(download->groupId, fileName);
-
 }
 
 void notifyTrackerPieceCompleted(string& groupId, string& fileName, int pieceIndex){
-    // Get client info (you'll need to pass this from main) - i did
     extern pair<string,int> clientInfo;
     extern string currentUserId;
     
@@ -604,7 +540,6 @@ void notifyTrackerPieceCompleted(string& groupId, string& fileName, int pieceInd
     pthread_mutex_unlock(&tracker_mutex);
 }
 
-// to tell the tracker that the complete download has been completed !
 void notifyTrackerDownloadComplete(string& groupId, string& fileName){
     extern pair<string,int> clientInfo;
     extern string currentUserId;
@@ -617,6 +552,5 @@ void notifyTrackerDownloadComplete(string& groupId, string& fileName){
     }
     pthread_mutex_unlock(&tracker_mutex);
 }
-
 
 #endif // DOWNLOAD_H

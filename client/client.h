@@ -69,9 +69,9 @@ void showActiveDownloads(){
             double progress = (double)completedPieces / download->totalPieces * 100.0;
             
             if(download->isComplete) {
-                cout << fontBold << colorGreen << "[Completed] [" << download->groupId << "] " << fileName << " -> " << download->destPath << reset << endl;
+                cout << fontBold << colorGreen << "[C] [" << download->groupId << "] " << fileName << " -> " << download->destPath << reset << endl;
             } else {
-                cout << fontBold << colorBlue << "[Downloading] [" << download->groupId << "] " << fileName << " (" << fixed << setprecision(1) << progress << "%) " << completedPieces << "/" << download->totalPieces << " pieces" << reset << endl;
+                cout << fontBold << colorBlue << "[D] [" << download->groupId << "] " << fileName << " (" << fixed << setprecision(1) << progress << "%) " << completedPieces << "/" << download->totalPieces << " pieces" << reset << endl;
                 
                 // Show seeder count for each piece
                 cout << "  Piece status: ";
@@ -163,6 +163,35 @@ bool handleClientCommand(string input, int sockfd, pair<string,int> clientInfo){
     if(tokens[0] == "upload_file"){
         handleUploadFileClient(sockfd, tokens, clientInfo);
         return true;
+    }
+    if(tokens[0] == "download_file"){ // prlim check before downloading -
+        if(tokens.size() != 4){
+            cout << colorRed << fontBold << "Usage: download_file <group_id> <file_name> <destination_path>" << reset << endl;
+            return true;
+        }
+        string fileName = tokens[2];
+        
+        // Check if already seeding
+        pthread_mutex_lock(&seed_mutex);
+        bool isSeeding = (seedingFiles.find(fileName) != seedingFiles.end());
+        pthread_mutex_unlock(&seed_mutex);
+        
+        if(isSeeding){
+            cout << colorRed << fontBold << "You are already seeding this file! No need to download." << reset << endl;
+            return true;
+        }
+        
+        // Check if already downloading
+        pthread_mutex_lock(&download_mutex);
+        bool isDownloading = (activeDownloads.find(fileName) != activeDownloads.end());
+        pthread_mutex_unlock(&download_mutex);
+        
+        if(isDownloading){
+            cout << colorYellow << fontBold << "This file is already being downloaded!" << reset << endl;
+            return true;
+        }
+        
+        return false;
     }
     if(tokens[0] == "login"){
         if(tokens.size() != 3){
