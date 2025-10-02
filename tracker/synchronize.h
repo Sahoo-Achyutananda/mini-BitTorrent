@@ -462,6 +462,7 @@ void* healthChecker(void* arg){
     }
     return NULL;
 }
+
 void* messageFlusher(void* arg){
     while (true){
         sleep(5);

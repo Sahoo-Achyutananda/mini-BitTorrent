@@ -1,65 +1,118 @@
-```bash
-dd if=/dev/urandom of=onegb.bin bs=1M count=1000
-```
+# P2P Distributed File Sharing System Implementation Details
 
+This document outlines the architecture, component responsibilities, key algorithms, and detailed protocol specifications used in the Peer-to-Peer (P2P) Distributed File Sharing System.
 
-# mini-BitTorrent
-A simple distributed file system (a mini bit torrent) built using C++.
-
-## Files Present -
+## How to Run 
 
 ```bash
-client.cpp -> the client code
-tracker.cpp -> the tracker code
-tracker_info.txt -> stores the ip:port combinations of two trackers
+make
+// tracker
+cd tracker
+./tracker_app tracker_info.txt <tracker_no> // tracker_no is 0 or 1
 
-// Supporting files -
-constructs.h -> contains the classes and data structures used by the client and tracker
-synchronize.h -> contains the functions used for syncronization between trackers
-colors.h -> not relevant to any functionality, just helps to add some colors to the boring texts
+// clients - in another terminal 
+cd client
+./client_app 127.0.0.1:4050 tracker_info.txt // any port number can be used except for the tracker ports
 ```
+---
+## Overview: Basic Implementation Details
 
-## How to Run -
+The system is a decentralized, multi-threaded P2P file-sharing application built in **C++** using **POSIX Threads (`pthread`)** for concurrency. It employs a **hybrid architecture** where a Multi-Tracker layer manages centralized metadata, and the Client (Peer) layer handles file transfers directly between peers.
 
-```bash
-// trackers -
-g++ tracker.cpp -o tracker
-./tracker tracker_info.txt 0 // for the first tracker
-./tracker tracker_info.txt 1 // for the second tracker
+Key implementation aspects include:
+* **Networking**: Uses standard **TCP** for both Tracker-Client and Peer-Peer communication.
+* **Data Structures**: Core state relies on C++ **`unordered_map`** for $O(1)$ average-time complexity lookups.
+* **File Integrity**: **SHA1 hashing** is used to verify the integrity of individual file pieces after download.
+* **Transfer Optimization**: File pieces are transferred in fixed sizes (e.g., **512KB chunks**).
+* **Concurrent Downloading**: Piece downloads are managed by an **I/O-optimized Thread Pool** for maximum speed and efficiency.
 
-// clients -
-g++ client.cpp -o client
-./client 127.0.0.1:4050 tracker_info.txt // any port number can be used
-```
+---
+## Client (Peer)
+The Client acts as a hybrid entity that is both a **Downloader** (initiating piece requests) and a **Seeder** (running a separate download server to serve pieces). It maintains local state for **active downloads** and **seeding files**, protected by dedicated mutexes.
 
-## Implementation - 
+### Key Responsibilities:
+1.  **User Authentication**: Login/logout functionality with credential management.
+2.  **File Upload**: Calculate SHA1 hashes for file pieces and register metadata with the tracker.
+3.  **File Download**: Multi-threaded parallel downloading from multiple seeders.
+4.  **Tracker Failover**: Automatically switch to backup trackers when the primary fails.
+5.  **Seeding**: Serve file pieces to other peers upon request.
 
-### Tracker to Tracker Communication -
-The trackers communicate (pass syunchronization messages) via another port (apart from the one where the tracker is running). This ensures that the port where the trackers are individually running only handle client requests and trackers communicate with each other through another port.
-This ensures proper separation of tasks.
+### Client Architecture:
+The client runs several concurrent components:
+* **Main Thread**: Handles user input and tracker communication using **`select()`** for non-blocking I/O.
+* **Download Server Thread**: Listens for incoming peer piece requests on `client_port + 2000`.
+* **Heartbeat Thread**: Monitors tracker health by periodically checking `tracker_port + 1000`.
+* **Download Worker Threads**: A **Thread Pool** executes parallel piece downloads.
 
-- Refer the syncHandler() function for the implementation - present in the synchronize.h file.
+### Client Commands (Tracker Protocol)
+Clients issue these commands over the main TCP connection to the tracker:
 
-- If a tracker is running at port 8050, the synchronization Handler runs on the port 9050 (8050 + 1000). This same port is used to check the health of the tracker too.
+| Command | Description |
+| :--- | :--- |
+| `create_user <userid> <password>` | Register new user account |
+| `login <userid> <password>` | Authenticate and start session |
+| `logout` | End session and stop all seeding |
+| `create_group <groupid>` | Create new file-sharing group |
+| `join_group <groupid>` | Request to join existing group |
+| `leave_group <groupid>` | Leave group and stop seeding group files |
+| `list_groups` | Display all available groups |
+| `list_requests <groupid>` | Show pending join requests (owner only) |
+| `accept_request <groupid> <userid>` | Accept user into group (owner only) |
+| `upload_file <groupid> <filepath>` | Share file with group |
+| `list_files <groupid>` | View files available in group |
+| `download_file <groupid> <filename> <destpath>` | Download file from group |
+| `stop_share <groupid> <filename>` | Stop seeding a file |
+| `show_downloads` | Display active download progress |
+| `quit` | Gracefully shutdown client |
 
-### Tracker Synchronization -
-A function to check the health status (present in the synchromize.h file) of the trackers was implemented. It periodically checks the trackers and updates the activeTrackers vector. Based on the updated list, the primary tracker is selected. Refer the synchronize.h file for the detailed implementation.
+---
+## Server (Tracker)
 
-- Supporting functions pass sync messages from the primary tracker to the secondary tracker. The message format is as follows - 
-```bash
-[SYNC OUT] MESSAGE --> SHOWN ON THE PRIMARY TRACKER WHEN A SYNC MESSAGE IS SENT
-[SYNC IN] MESSAGE --> SHOWN ON THE SECONDARY TRACKERS WHEN IT RECECIVES THE SYNC MESSAGE
-```
+The Server functions as the **Tracker**, managing all central metadata for user accounts, group membership, and shared file information (`FileInfo` objects). It uses a single TCP listener and spawns a new thread for every incoming client connection.
 
-### Tracker to Client Communication -
-This is obvious. The tracker details are present in the tracker_info.txt file. Clients read the file and connect to the tracker that is available.
-- For every client, a new thread is created at the tracker side to handle the requests.
-- Initially the primary tracker is responsible for handling the client requests. For every request, a sync message is sent to the secondary tracker. The respective data structures are updated.
+### Key Responsibilities:
+* **User/Group Management**: Creating users, groups, and handling requests.
+* **Metadata Storage**: Storing file metadata shared by users.
+* **State Synchronization**: Syncing its state with secondary trackers.
 
+## Tracker Synchronization
 
-## Existing Issues, Bugs and next plans -
+The system employs a **Primary-Secondary** replication model where the primary tracker broadcasts all state changes to secondary trackers on a dedicated sync port (`tracker_port + 1000`).
 
-1. Currently only simple sync messages are sent when a single action is performed. This only works properly if both trackers are running together from the start. 
-   1. This isnt robust and there are a variety of edge cases that is to be handled. This can be solved by sending batch updates - a queue can be used to store all updates. 
-   2. Consider the case where Tracker 1 goes down and Tracker 2 is handling the client requests. Later when Tracker 1 comes up, every data structure of Tracker 1 has to be updated.
-2. The case where the owner leaves the group is not handled. This can be done by promoting another user of the group into a owner.
+### Synchronization Protocol Message Formats
+All sync messages follow the format: `OPERATION | data`.
+
+| Operation | Data Format | Description |
+| :--- | :--- | :--- |
+| `CREATE_USER` | `userid password` | New user registration. |
+| `LOGIN` | `userid password` | User login event. |
+| `LOGOUT` | `userid` | User logout, cleanup seeders. |
+| `CREATE_GROUP` | `groupid ownerid` | New group creation. |
+| `JOIN_GROUP` | `groupid userid` | Group join request. |
+| `LEAVE_GROUP` | `groupid userid` | User leaves group. |
+| `ACCEPT_REQUEST` | `groupid userid` | Accept join request. |
+| `UPLOAD_FILE` | `groupid filename filepath filesize uploaderid fullsha userid port ip piece1 piece2 ...` | File metadata registration. |
+| `PIECE_COMPLETED` | `groupid filename pieceindex userid ip port` | Piece download completion. |
+| `REMOVE_SEEDER` | `groupid filename userid ip port` | Remove specific seeder. |
+| `REMOVE_FILE` | `groupid filename` | Delete file metadata. |
+| `TRANSFER_OWNERSHIP` | `groupid oldowner newowner` | Group ownership transfer. |
+| `DELETE_GROUP` | `groupid` | Complete group deletion. |
+
+## Client to Client Communication
+
+Peers communicate directly for file piece transfers, with each client running a Download Server listening on `client_port + 2000`.
+
+### Peer Request Protocol
+| Request/Response | Format |
+| :--- | :--- |
+| **Piece Request** | `GET_PIECE|filename|pieceIndex`. |
+| **Piece Response** | `PIECE_DATA|byteCount|\n` followed by **raw binary data**. |
+
+## Piece Selection Strategy and Thread Pool
+
+The implementation uses a **Sequential strategy**, submitting pieces in order (0, 1, 2, ...) to an I/O-optimized **Thread Pool** for concurrent execution.
+
+### Strategy Details:
+* **Initial Selection**: Pieces are submitted to the thread pool in order.
+* **Retry Logic**: When the thread pool becomes idle, the main download worker re-submits tasks for failed pieces, automatically retrying with **alternative seeders**.
+* **Integrity**: Every downloaded piece's **SHA1 hash** is verified against the tracker metadata
