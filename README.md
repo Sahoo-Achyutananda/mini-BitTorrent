@@ -2,18 +2,67 @@
 
 This document outlines the architecture, component responsibilities, key algorithms, and detailed protocol specifications used in the Peer-to-Peer (P2P) Distributed File Sharing System.
 
-## How to Run 
+## Project Structure
+
+```
+project/
+├── client/
+│   ├── client.cpp              # Main client executable
+│   ├── client.h                # Client command handlers
+│   ├── client_constructs.h     # Client data structures
+│   ├── download.h              # Download logic & peer communication
+│   ├── fileops.h               # File operations (upload/download)
+│   ├── sha.h                   # SHA1 hashing utilities
+│   ├── threadpool.h            # Thread pool implementation
+│   └── tracker_info.txt        # Tracker addresses (IP:port)
+├── tracker/
+│   ├── tracker.cpp             # Main tracker executable
+│   ├── constructs.h            # Core data structures
+│   ├── synchronize.h           # Tracker sync logic
+│   ├── colors.h                # Terminal formatting
+│   ├── utils.h                 # Utility functions
+│   └── tracker_info.txt        # Tracker addresses (IP:port)
+└── Makefile
+```
+---
+
+## How to Build and Run
+
+### Compilation
 
 ```bash
 make
-// tracker
-cd tracker
-./tracker_app tracker_info.txt <tracker_no> // tracker_no is 0 or 1
-
-// clients - in another terminal 
-cd client
-./client_app 127.0.0.1:4050 tracker_info.txt // any port number can be used except for the tracker ports
 ```
+
+### Starting Trackers
+
+Open two separate terminals for redundancy:
+
+```bash
+# Terminal 1 - Primary Tracker
+cd tracker
+./tracker_app tracker_info.txt 0
+
+# Terminal 2 - Secondary Tracker
+cd tracker
+./tracker_app tracker_info.txt 1
+```
+
+### Starting Clients
+
+Open additional terminals for each client:
+
+```bash
+# Terminal 3 - Client 1
+cd client
+./client_app 127.0.0.1:4050 tracker_info.txt
+
+# Terminal 4 - Client 2
+cd client
+./client_app 127.0.0.1:4051 tracker_info.txt
+```
+
+### **Note**: Use any available port numbers except tracker ports (9072, 9077 by default).
 ---
 ## Overview: Basic Implementation Details
 
@@ -115,6 +164,7 @@ All sync messages follow the format: `OPERATION | data`.
 | `REMOVE_FILE` | `groupid filename` | Delete file metadata. |
 | `TRANSFER_OWNERSHIP` | `groupid oldowner newowner` | Group ownership transfer. |
 | `DELETE_GROUP` | `groupid` | Complete group deletion. |
+| `DOWNLOAD_COMPLETE` | `groupid filename userid clientip clientport` | Updates seeder's list|
 
 ## Client to Client Communication
 
@@ -139,6 +189,7 @@ Peers communicate directly for file piece transfers, with each client running a 
 | **Tracker Synchronization** | Client 1 joins a group via Tracker 0 (Primary). Check Tracker 1 (Secondary) console for the sync message. | Tracker 1 console displays `[SYNC IN] JOIN_GROUP <gid> <uid>`. Tracker 1's internal group data structure is updated and verified. |
 | **Logout Cleanup** | User logs out while seeding a file that only they were sharing. | The file metadata is removed from the group and the global file list on the tracker, and a `REMOVE_FILE` sync message is broadcast. Client must be able to log in again. |
 
+---
 ## Piece Selection Strategy and Thread Pool
 
 The implementation uses a **Sequential strategy**, submitting pieces in order (0, 1, 2, ...) to an I/O-optimized **Thread Pool** for concurrent execution.

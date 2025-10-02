@@ -72,19 +72,6 @@ void showActiveDownloads(){
                 cout << fontBold << colorGreen << "[C] [" << download->groupId << "] " << fileName << " -> " << download->destPath << reset << endl;
             } else {
                 cout << fontBold << colorBlue << "[D] [" << download->groupId << "] " << fileName << " (" << fixed << setprecision(1) << progress << "%) " << completedPieces << "/" << download->totalPieces << " pieces" << reset << endl;
-                
-                // Show seeder count for each piece
-                cout << "  Piece status: ";
-                for(int i = 0; i < min(10, (int)download->pieces.size()); i++) {
-                    if(download->downloadedPieces[i]) {
-                        cout << colorGreen << "✓" << reset;
-                    } else {
-                        cout << colorRed << "(" << download->pieces[i].seeders.size() << ")" << reset;
-                    }
-                    cout << " ";
-                }
-                if(download->pieces.size() > 10) cout << "...";
-                cout << endl;
             }
         }
     }

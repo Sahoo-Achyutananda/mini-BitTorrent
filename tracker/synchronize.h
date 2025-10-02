@@ -341,6 +341,31 @@ void processSyncMessage(string operation, string data){
                 allFiles.erase(fileName);
             }
         }
+    }else if(operation == "DOWNLOAD_COMPLETE") {
+        if(tokens.size() == 5) {
+            string groupId = tokens[0];
+            string fileName = tokens[1];
+            string userId = tokens[2];
+            string clientIP = tokens[3];
+            int clientPort = stoi(tokens[4]);
+            
+            if(allFiles.find(fileName) != allFiles.end()) {
+                FileInfo* fileInfo = allFiles[fileName];
+                
+                // Check if already seeder
+                bool alreadySeeder = false;
+                for(const auto& seeder : fileInfo->seeders) {
+                    if(seeder.userId == userId && seeder.ip == clientIP && seeder.port == clientPort) {
+                        alreadySeeder = true;
+                        break;
+                    }
+                }
+                
+                if(!alreadySeeder) {
+                    fileInfo->addSeeder(userId, clientIP, clientPort);
+                }
+            }
+        }
     }
     
     pthread_mutex_unlock(&dsLock);

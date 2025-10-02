@@ -435,7 +435,7 @@ void *handleConnections(void *arg){
             if(clientName.empty()) writeToClient(newsockfd, "LOGIN NAME NOT REGISTERED !");
             writeToClient(newsockfd, clientName);
         }else if(tokens[0] == "upload_file"){
-            cout << colorBlue << cmd << reset << endl;
+            // cout << colorBlue << cmd << reset << endl;
             handleUploadFileTracker(newsockfd, tokens, clientName);
         }
         else if(tokens[0] == "list_files"){
@@ -454,15 +454,56 @@ void *handleConnections(void *arg){
             handleLogout(newsockfd, clientName);
         }
         else if(tokens[0] == "download_complete") {
+            if(tokens.size() != 6) {
+                writeToClient(newsockfd, "Invalid download_complete format");
+                return nullptr;
+            }
+            
             string groupId = tokens[1];
             string fileName = tokens[2];
             string userId = tokens[3];
-            string ip = tokens[4];
-            int port = stoi(tokens[5]);
-
-            if(allFiles.find(fileName) != allFiles.end()) {
-                allFiles[fileName]->addSeeder(userId, ip, port);
+            string clientIP = tokens[4];
+            int clientPort = stoi(tokens[5]);
+            
+            if(clientName.empty()) {
+                writeToClient(newsockfd, "No user is logged in!");
+                return nullptr;
             }
+            
+            pthread_mutex_lock(&dsLock);
+            
+            // Check if file exists
+            if(allFiles.find(fileName) == allFiles.end()) {
+                pthread_mutex_unlock(&dsLock);
+                writeToClient(newsockfd, "File not found");
+                return nullptr;
+            }
+            
+            FileInfo* fileInfo = allFiles[fileName];
+            
+            // Check if already a seeder - taaki duplicate na ho sake - maybe using a set would've been better !
+            bool alreadySeeder = false;
+            for(const auto& seeder : fileInfo->seeders) {
+                if(seeder.userId == userId && seeder.ip == clientIP && seeder.port == clientPort) {
+                    alreadySeeder = true;
+                    break;
+                }
+            }
+            
+            if(!alreadySeeder) {
+                // Add as seeder to file-level and all pieces
+                fileInfo->addSeeder(userId, clientIP, clientPort);
+                
+                cout << fontBold << colorGreen << userId << " completed download of " << fileName << " and is now seeding" << reset << endl;
+                
+                // Sync with other trackers
+                syncMessageHelper("DOWNLOAD_COMPLETE", groupId + " " + fileName + " " + userId + " " + clientIP + " " + to_string(clientPort));
+                writeToClient(newsockfd, "Download complete, now seeding");
+            } else {
+                writeToClient(newsockfd, "Already registered as seeder");
+            }
+            
+            pthread_mutex_unlock(&dsLock);
         }
         else{
             writeToClient(newsockfd, "Invalid Command ... \nValid Commands :\n1. create_user <userid> <password>\n2. login <userid> <password>");
