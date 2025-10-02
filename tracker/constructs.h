@@ -27,13 +27,17 @@ unordered_map<string, FileInfo*> allFiles; // fileName se FileInfo*
 
 
 // Added this construct to handle the logout part - didnt read the doc correctly !
-struct SeederInfo {
+class SeederInfo {
+public :
     string userId;
     string ip;
     int port;
     
-    SeederInfo(string user, string ip, int port) 
-        : userId(user), ip(ip), port(port){}
+    SeederInfo(string user, string ip, int port){
+        this->ip = ip;
+        this->userId = user;
+        this->port = port;
+    }
 };
 
 class FilePiece{

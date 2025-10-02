@@ -176,11 +176,7 @@ void initializeThreadPool(){
 
     /////////////////////////////////////
     int numCores = sysconf(_SC_NPROCESSORS_ONLN);
-    // Use 2x cores for I/O bound tasks (downloading is I/O bound)
-    optimalThreads = numCores * 2;
-    // Cap between 4 and 16 threads
-    if(optimalThreads < 4) optimalThreads = 4;
-    if(optimalThreads > 16) optimalThreads = 16;
+    optimalThreads = numCores;
     /////////////////////////////////////
 
     globalDownloadPool = new ThreadPool(optimalThreads);
