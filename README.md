@@ -25,6 +25,24 @@ Key implementation aspects include:
 * **File Integrity**: **SHA1 hashing** is used to verify the integrity of individual file pieces after download.
 * **Transfer Optimization**: File pieces are transferred in fixed sizes (e.g., **512KB chunks**).
 * **Concurrent Downloading**: Piece downloads are managed by an **I/O-optimized Thread Pool** for maximum speed and efficiency.
+  
+## Data Structures Chosen and Rationale
+Core state management relies heavily on the following C++ standard containers:
+
+| Data Structure | Component | Rationale |
+| :--- | :--- | :--- |
+| **`unordered_map<string, ...>`** | Tracker and Client Global States | Provides **$\mathcal{O}(1)$ average-time complexity for key lookups** (e.g., finding a user, group, or active download by ID or name), which is critical for tracker speed under concurrent load. |
+| **`vector<FilePiece>`** | Tracker `FileInfo` | Stores piece metadata in **index order**, enabling fast lookup by piece index and easy iteration. |
+| **`queue<string>`** | Tracker `pendingMessages` | Used to store synchronization messages that failed to send, naturally providing a **First-In, First-Out (FIFO)** retry order. |
+| **`pthread_mutex_t`** | Global state (eg : `dsLock`), Client state | Enforces **mutual exclusion** to prevent **race conditions** when multiple threads simultaneously attempt to read or write shared data. Used in various places |
+
+## Assumptions Made During Implementation
+
+1.  **Stable Networking**: All peers and trackers have stable, reachable **IP addresses and ports** that don't require complex NAT traversal or UPnP.
+2.  **Files Must Be Local to Client Directory**: The files to be uploaded or downloaded **must be present in, or relative to, the client's execution directory** (e.g., inside the `/client` folder). This ensures local file paths are valid.
+3.  **Logout Clears Seeding State**: A user **logout removes all file seeding metadata** associated with that user from the tracker. The client **must re-upload** the files after a successful login to resume sharing them.
+4.  **Local File Access**: Assumes the client application has the necessary file system permissions to **read shared files** and **write downloaded files** to the specified paths.
+5.  **Quit Command** : Trackers and Clients must exit using the quit command. Ctrl+C handling was not implemented. 
 
 ---
 ## Client (Peer)
@@ -107,6 +125,19 @@ Peers communicate directly for file piece transfers, with each client running a 
 | :--- | :--- |
 | **Piece Request** | `GET_PIECE|filename|pieceIndex`. |
 | **Piece Response** | `PIECE_DATA|byteCount|\n` followed by **raw binary data**. |
+
+--- 
+## Comprehensive Testing Procedures
+
+| Feature to Test | Procedure | Expected Pass Criteria |
+| :--- | :--- | :--- |
+| **User/Group Management** | Run `create_user` and `create_group` commands on Client 1. Run `list_users` and `list_groups` on the Tracker console. | Tracker console shows the new user and group ID. Client receives a "Successfully Created" message. |
+| **Tracker Failover** | 1. Start Client 1. 2. **Kill** Tracker 0 (Primary). 3. Wait for Heartbeat to switch. 4. Client 1 runs `login` (auto-relogin). | Tracker 1 prints "Promoted to Primary Tracker." Client successfully connects to Tracker 1 and auto-relogin is successful, resuming its session. |
+| **File Upload/Seeding** | Client 1 runs `upload_file <gid> <filepath>`. Client 2 runs `list_files <gid>`. | Client 1 successfully sends metadata. Client 2 receives the filename in the file list. The file is listed in the `seedingFiles` map on Client 1. |
+| **Parallel Download** | Client 2 runs `download_file <gid> <fname> <destpath>`. | `show_downloads` on Client 2 shows multiple pieces being downloaded concurrently. The file is successfully merged into the final destination path upon completion. |
+| **Integrity Check** | Manually corrupt a piece of the shared file on the Seeder (Client 1). Client 2 attempts to download that piece. | Client 2 console logs a **"Hash mismatch"** error. The piece is discarded and automatically retried from an alternative seeder (if available). |
+| **Tracker Synchronization** | Client 1 joins a group via Tracker 0 (Primary). Check Tracker 1 (Secondary) console for the sync message. | Tracker 1 console displays `[SYNC IN] JOIN_GROUP <gid> <uid>`. Tracker 1's internal group data structure is updated and verified. |
+| **Logout Cleanup** | User logs out while seeding a file that only they were sharing. | The file metadata is removed from the group and the global file list on the tracker, and a `REMOVE_FILE` sync message is broadcast. Client must be able to log in again. |
 
 ## Piece Selection Strategy and Thread Pool
 
